@@ -30,5 +30,5 @@ If this is a unit test bug for an Epic, specify the Epic.
 If this is a general bug, do not specify Epic.
 
 **Release, milestone**
-Always specify Release (e.g. "Skyward")
+Optionally specify release if applicable.
 Optionally specify milestone if applicable.
