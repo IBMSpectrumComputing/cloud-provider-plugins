@@ -1,0 +1,17 @@
+---
+
+kind: ClusterRole
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  annotations:
+  name: lsf-rc-clusterrole
+  namespace: @_NAMESPACE_@
+rules:
+  - verbs:
+      - list
+      - get
+      - watch
+    apiGroups:
+      - ''
+    resources:
+      - persistentvolumeclaims

@@ -1,0 +1,8 @@
+{
+    "LogLevel": "INFO",
+    "AZURE_CC_SERVER": "https://cycle-cloud-host",
+    "AZURE_CC_CLUSTER": "LSFCluster",
+    "AZURE_CC_USER": "username",
+    "AZURE_CC_PASSWORD": "password",
+    "AZURE_CC_REGION": "region"
+}

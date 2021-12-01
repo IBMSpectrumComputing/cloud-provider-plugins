@@ -1,0 +1,87 @@
+#!/usr/bin/python
+
+# Copyright International Business Machines Corp, 2020
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#    http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# -*- coding: utf-8 -*-
+
+import sys, os, getopt
+import math
+import json
+
+def usage(message = ''):
+    if message: print message
+    print 'Usage  : %s --subnet <subnet_cidr> --domain <instance_domain>' % sys.argv[0]
+    print 'Example: %s --subnet 10.110.135.192/26 --domain openstack.domain' % sys.argv[0]
+    sys.exit(1)
+    
+def int_to_ip(number):
+    tmplist = [0] * 4
+    for i in range(3, -1, -1):
+        tmplist[i] = number % 256
+        number = number / 256
+    return '.'.join(str(n) for n in tmplist)
+    
+def main():
+    cidr = ''
+    domain = ''
+
+    try:
+        opts, args = getopt.getopt(sys.argv[1:], '', ['subnet=', 'domain='])
+    except getopt.GetoptError as err:
+        usage(str(err))
+    for o, a in opts:
+        if o == '--subnet': cidr = a
+        elif o == '--domain': domain = a
+        else: usage('option %s not recognized' % o)
+    if (not cidr) or (not domain): usage()
+    
+    tmplist = cidr.split('/')
+    if len(tmplist) != 2: usage('Incorrect subnet_cidr parameter.')
+    net_str, mask_str = tmplist[0], tmplist[1]
+    try:
+        net_list = [int(i) for i in net_str.split('.')]
+        mask_bits = int(mask_str)
+    except:
+        usage('Incorrect subnet_cidr parameter.')
+    if len(net_list) != 4: usage('Incorrect subnet_cidr parameter.')
+    for i in net_list:
+        if i < 0 or i > 255: usage('Incorrect subnet_cidr parameter.')
+    if mask_bits <=0 or mask_bits >= 32: usage('Incorrect subnet_cidr parameter.')
+    # 24 bit = FFFFFFFF - FF
+    mask_i = int((math.pow(2, 32) - 1)) - int((math.pow(2, 32-mask_bits) - 1))
+    net_i = net_list[0]*256*256*256 + net_list[1]*256*256 + net_list[2]*256 + net_list[3]
+    net_i = net_i & mask_i
+    
+    ip_count = int(math.pow(2, 32-mask_bits) - 1)
+    
+    scripts_dir = os.path.dirname(sys.argv[0])
+    conf_dir = os.path.abspath(scripts_dir + '/../conf')
+    config_filename = conf_dir + '/' + 'osprov_config.json'
+
+    try:
+        conf_data = json.load(file(config_filename))
+        prefix = conf_data.get('InstancePrefix', 'host')
+    except Exception, ex:
+        print '%s is not well formated. exception: %s' % (config_filename, str(ex))
+        sys.exit(1)
+        
+    for i in range(1, ip_count + 1):
+        ip_str = int_to_ip(net_i + i)
+        hostname = prefix + '-' + ip_str.replace('.', '-')
+        print '%s    %s.%s %s' % (ip_str, hostname, domain, hostname)
+
+        
+if __name__ == '__main__':
+    main()

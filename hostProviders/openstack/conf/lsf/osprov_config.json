@@ -1,0 +1,17 @@
+{
+  "LogLevel": "WARNING",
+  "InstancePrefix": "host",
+  "OS_USERNAME": "lsf_user",
+  "OS_PASSWORD": "password",
+  "OS_AUTH_URL": "http://xx.xx.xx.xx:5000/v3",
+  "OS_USER_DOMAIN_ID": "default",
+  "OS_PROJECT_NAME": "lsf_project",
+  "OS_PROJECT_DOMAIN_ID": "default",
+  "OS_KEYPAIR": "lsf_key",
+  "OS_NETWORK_NAME": "lsf_network",
+  "OS_DNS_SERVER": "xx.xx.xx.xx",
+  "OS_SECURITYGROUPS": [
+    { "name": "default" }
+  ]
+}
+

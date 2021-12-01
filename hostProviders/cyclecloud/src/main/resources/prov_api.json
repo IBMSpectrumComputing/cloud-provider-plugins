@@ -1,0 +1,28 @@
+{
+    "apis": {
+        "1": {
+            "method": "POST", 
+            "url": "/clusters/{cluster}/nodes/create"
+        }, 
+        "2": {
+            "method": "POST", 
+            "url": "/clusters/{cluster}/nodes/remove"
+        }, 
+        "3": {
+            "method": "POST", 
+            "url": "/clusters/{cluster}/nodes/terminate"
+        }, 
+        "4": {
+            "method": "GET", 
+            "url": "/clusters/{cluster}/nodes?request_id={id}"
+        }, 
+        "5": {
+            "method": "GET", 
+            "url": "/clusters/{cluster}/status"
+        }, 
+        "6": {
+            "method": "GET", 
+            "url": "/clusters/{cluster}/nodes"
+        }
+    }
+}

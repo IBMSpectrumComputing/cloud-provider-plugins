@@ -1,0 +1,122 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project name="AzureTool" default="compile" basedir=".">
+	<description>Build AzureTool.jar</description>
+	<property environment="env" />
+	<property name="lib.dir" value="${env.HOME}/pcc/lsfqa-trusted/blue/3rdparty" />
+	<property name="jarfilename" value="${ant.project.name}.jar" />
+	<property name="src" value="src/main/java" />
+	<property name="resource" value="src/main/resources" />
+	<property name="bin" value="bin" />
+	<property name="classes" value="bin/classes" />
+	<property name="lib" value="lib" />
+
+	<target name="init">
+		<mkdir dir="${classes}" />
+		<mkdir dir="${lib}" />
+	</target>
+
+	<target name="copy_third_party_jars" depends="init" description="copy all third party jar files to lib directory">
+		<copy todir="${lib}" flatten="true">
+			<resources>
+				<file file="${lib.dir}/activation/1.1/activation-1.1.jar" />
+				<file file="${lib.dir}/azure/adal4j/1.1.2/adal4j-1.1.2.jar" />
+				<file file="${lib.dir}/accessors-smart/1.2/accessors-smart-1.2.jar" />
+				<file file="${lib.dir}/asm/5.0.4/asm-5.0.4.jar" />
+				<file file="${lib.dir}/azure/azure/1.0.0/azure-1.0.0.jar" />
+				<file file="${lib.dir}/azure/azure-client-authentication/1.0.4/azure-client-authentication-1.0.4.jar" />
+				<file file="${lib.dir}/client-runtime/1.0.4/client-runtime-1.0.4.jar" />
+				<file file="${lib.dir}/azure/azure-client-runtime/1.0.4/azure-client-runtime-1.0.4.jar" />
+				<file file="${lib.dir}/azure/azure-mgmt-compute/1.0.0/azure-mgmt-compute-1.0.0.jar" />
+				<file file="${lib.dir}/azure/azure-mgmt-network/1.0.0/azure-mgmt-network-1.0.0.jar" />
+				<file file="${lib.dir}/azure/azure-mgmt-resources/1.0.0/azure-mgmt-resources-1.0.0.jar" />
+				<file file="${lib.dir}/azure/azure-mgmt-storage/1.0.0/azure-mgmt-storage-1.0.0.jar" />
+				<file file="${lib.dir}/commons-beanutils/1.9.4/commons-beanutils-1.9.4.jar" />
+				<file file="${lib.dir}/commons-codec/1.14/commons-codec-1.14.jar" />
+				<file file="${lib.dir}/commons-collections/3.2.2/commons-collections-3.2.2.jar" />
+				<file file="${lib.dir}/commons-lang3/3.4/commons-lang3-3.4.jar" />
+				<file file="${lib.dir}/commons-lang/2.6/commons-lang-2.6.jar" />
+				<file file="${lib.dir}/commons-logging/1.2/commons-logging-1.2.jar" />
+				<file file="${lib.dir}/converter-jackson/2.1.0/converter-jackson-2.1.0.jar" />
+				<file file="${lib.dir}/ezmorph/1.0.6/ezmorph-1.0.6.jar" />
+				<file file="${lib.dir}/gson/2.2.4/gson-2.2.4.jar" />
+				<file file="${lib.dir}/guava/20.0/guava-20.0.jar" />
+				<file file="${lib.dir}/jackson-annotations/2.12.4/jackson-annotations-2.12.4.jar" />
+				<file file="${lib.dir}/jackson-core/2.12.4/jackson-core-2.12.4.jar" />
+				<file file="${lib.dir}/jackson-databind/2.12.4/jackson-databind-2.12.4.jar" />
+				<file file="${lib.dir}/jackson-datatype-joda/2.12.4/jackson-datatype-joda-2.12.4.jar" />
+				<file file="${lib.dir}/jcip-annotations/1.0/jcip-annotations-1.0.jar" />
+				<file file="${lib.dir}/joda-time/2.10.8/joda-time-2.10.8.jar" />
+				<file file="${lib.dir}/json-lib/2.2.3/json-lib-2.2.3-jdk15.jar" />
+				<file file="${lib.dir}/json-smart/2.3/json-smart-2.3.jar" />
+				<file file="${lib.dir}/lang-tag/1.4/lang-tag-1.4.jar" />
+				<file file="${lib.dir}/log4j-api/2.14.1/log4j-api-2.14.1.jar" />
+				<file file="${lib.dir}/log4j-core/2.14.1/log4j-core-2.14.1.jar" />
+				<file file="${lib.dir}/logging-interceptor/3.14.9/logging-interceptor-3.14.9.jar" />
+				<file file="${lib.dir}/mail/1.4.7/mail-1.4.7.jar" />
+				<file file="${lib.dir}/nimbus-jose-jwt/8.17/nimbus-jose-jwt-8.17.jar" />
+				<file file="${lib.dir}/oauth2-oidc-sdk/4.5/oauth2-oidc-sdk-4.5.jar" />
+				<file file="${lib.dir}/okhttp/3.14.9/okhttp-3.14.9.jar" />
+				<file file="${lib.dir}/okhttp-urlconnection/3.14.9/okhttp-urlconnection-3.14.9.jar" />
+				<file file="${lib.dir}/okio/1.17.2/okio-1.17.2.jar" />
+				<file file="${lib.dir}/retrofit/2.9.0/retrofit-2.9.0.jar" />
+				<file file="${lib.dir}/adapter-rxjava/2.1.0/adapter-rxjava-2.1.0.jar" />
+				<file file="${lib.dir}/slf4j-simple/1.7.5/slf4j-simple-1.7.5.jar" />
+				<file file="${lib.dir}/rxjava/1.2.4/rxjava-1.2.4.jar" />
+				<file file="${lib.dir}/slf4j-api/1.7.22/slf4j-api-1.7.22.jar" />
+				<file file="${lib.dir}/azure/azure-mgmt-keyvault/1.0.0/azure-mgmt-keyvault-1.0.0.jar" />
+				<file file="${lib.dir}/azure/azure-mgmt-graph-rbac/1.0.0/azure-mgmt-graph-rbac-1.0.0.jar" />
+				<file file="${lib.dir}/azure/azure-mgmt-batch/1.0.0/azure-mgmt-batch-1.0.0.jar" />
+				<file file="${lib.dir}/azure/azure-mgmt-trafficmanager/1.0.0/azure-mgmt-trafficmanager-1.0.0.jar" />
+				<file file="${lib.dir}/azure/azure-mgmt-redis/1.0.0/azure-mgmt-redis-1.0.0.jar" />
+				<file file="${lib.dir}/azure/azure-mgmt-cdn/1.0.0/azure-mgmt-cdn-1.0.0.jar" />
+				<file file="${lib.dir}/azure/azure-mgmt-dns/1.0.0/azure-mgmt-dns-1.0.0.jar" />
+				<file file="${lib.dir}/azure/azure-mgmt-appservice/1.0.0/azure-mgmt-appservice-1.0.0.jar" />
+				<file file="${lib.dir}/azure/azure-mgmt-sql/1.0.0/azure-mgmt-sql-1.0.0.jar" />
+				<file file="${lib.dir}/azure/azure-mgmt-servicebus/1.0.0/azure-mgmt-servicebus-1.0.0.jar" />
+				<file file="${lib.dir}/azure/azure-annotations/1.0.0/azure-annotations-1.0.0.jar" />
+			</resources>
+		</copy>
+	</target>
+
+	<path id="lib.classpath" description="all jar files in lib direcory">
+		<fileset dir="${lib}">
+			<include name="*.jar" />
+		</fileset>
+	</path>
+
+
+	<target name="compile" depends="copy_third_party_jars" description="compile target">
+		<javac encoding="utf-8" srcdir="${src}" destdir="${classes}" includeantruntime="true" debug="true" debuglevel="lines,source">
+			<classpath refid="lib.classpath" />
+		</javac>
+	</target>
+
+	<target name="jar" depends="compile" description="make jar file">
+		<!-- convert classpath to a flat list/string for use in manifest task -->
+		<pathconvert property="mf.classpath" pathsep=" ">
+			<path refid="lib.classpath" />
+			<flattenmapper />
+		</pathconvert>
+
+		<jar jarfile="lib/${jarfilename}" basedir="${classes}">
+			<manifest>
+				<attribute name="Main-Class" value="com.ibm.spectrum.AzureMain" />
+				<attribute name="Class-Path" value="${mf.classpath}" />
+			</manifest>
+
+			<fileset dir="${src}" includes="*.xml" />
+			<fileset dir="${resource}" includes="*.json" />
+		</jar>
+	</target>
+
+	<target name="run" depends="jar">
+		<java jar="${jarfilename}" fork="true">
+		</java>
+	</target>
+
+	<target name="clean">
+		<delete dir="${bin}" />
+		<delete dir="${lib}" includes="${ant.project.name}*.jar" />
+		<delete dir="${lib}" />
+	</target>
+</project>

@@ -1,0 +1,212 @@
+{
+    "$schema": "http://schema.management.azure.com/schemas/2015-01-01/deploymentTemplate.json#",
+    "contentVersion": "1.0.0.0",
+    "parameters": {
+        "virtualMachineName": {
+            "type": "string",
+            "metadata": {
+              "Description": "Specify virtual machine name."
+            }
+        },
+        "storageAccountType": {
+            "type": "string",
+            "metadata": {
+              "Description": "Specify storage account type."
+            }
+        },
+        "virtualMachineSize": {
+            "type": "string",
+            "metadata": {
+              "Description": "Specify virtual machine configuration."
+            }
+        },
+        "adminUsername": {
+            "type": "string",
+            "metadata": {
+              "Description": "Administrator name, who can switch to root without password."
+            }
+        },
+        "adminPublicKey": {
+            "type": "string",
+            "metadata": {
+              "Description": "Administrator's public key."
+            }
+        },
+        "virtualNetworkName": {
+            "type": "string",
+            "metadata": {
+              "Description": "Virtual network to put resource"
+            }
+        },
+        "networkInterfaceName": {
+            "type": "string",
+            "metadata": {
+              "Description": "pre-created network interface to put resource"
+            }
+        },
+        "virtualNetworkResourceGroup": {
+            "type": "string",
+            "metadata": {
+              "Description": "Resource group where virtual network located"
+            }
+        },
+        "subnetName": {
+            "type": "string",
+            "metadata": {
+              "Description": "Subnet where resource will be put"
+            }
+        },
+        "tagValues": {
+            "type": "object",
+            "metadata": {
+              "Description": "Tagvalues where resource used"
+            }
+        },
+        "imageId": {
+            "type": "string",
+            "metadata": {
+              "Description": "Specify virtual machine image id which will be used to provision virtual machine."
+            }
+        },
+        "postScriptUri": {
+            "type": "string",
+            "metadata": {
+              "Description": "Script to run after virtual machine provision finished, it will run as root."
+            }
+        },
+        "postScriptCommand": {
+            "type": "string",
+            "metadata": {
+              "Description": "The command that will be used to run the post script."
+            }
+        },
+        "privateIpAddress": {
+            "type": "string",
+            "metadata": {
+              "Description": "Virtual machine's virtual IP address."
+            }
+        },
+        "networkSecurityGroups": {
+            "type": "string",
+            "metadata": {
+              "Description": "Virtual machine's network security group."
+            }
+        }
+    },
+    "variables": {
+        "location": "[resourceGroup().location]",
+        "vnetId": "[resourceId(parameters('virtualNetworkResourceGroup'),'Microsoft.Network/virtualNetworks', parameters('virtualNetworkName'))]",
+        "subnetRef": "[concat(variables('vnetId'), '/subnets/', parameters('subnetName'))]",
+        "networkInterfaceName": "[parameters('networkInterfaceName')]",
+        "osDiskName": "[concat(parameters('virtualMachineName'), '-osdisk')]",
+        "extensionName": "[concat(parameters('virtualMachineName'), '/ext')]",
+        "post-script": {
+          "scripts": [
+             "[parameters('postScriptUri')]"
+          ],
+          "commandToRun": "[parameters('postScriptCommand')]"
+        }
+    },
+    "resources": [
+        {
+            "name": "[parameters('virtualMachineName')]",
+            "type": "Microsoft.Compute/virtualMachines",
+            "apiVersion": "2016-04-30-preview",
+            "location": "[variables('location')]",
+            "tags": "[parameters('tagValues')]",
+            "dependsOn": [
+                "[concat('Microsoft.Network/networkInterfaces/', variables('networkInterfaceName'))]"
+            ],
+            "properties": {
+                "osProfile": {
+                    "computerName": "[parameters('virtualMachineName')]",
+                    "adminUsername": "[parameters('adminUsername')]",
+                    "linuxConfiguration": {
+                        "disablePasswordAuthentication": "true",
+                        "ssh": {
+                            "publicKeys": [
+                                {
+                                    "path": "[concat('/home/', parameters('adminUsername'), '/.ssh/authorized_keys')]",
+                                    "keyData": "[parameters('adminPublicKey')]"
+                                }
+                            ]
+                        }
+                    }
+                },
+                "hardwareProfile": {
+                    "vmSize": "[parameters('virtualMachineSize')]"
+                },
+                "storageProfile": {
+                    "imageReference": {
+                        "id": "[parameters('imageId')]"
+                    },
+                    "osDisk": {
+                        "name": "[variables('osDiskName')]",
+                        "createOption": "fromImage",
+                        "managedDisk": {
+                            "storageAccountType": "[parameters('storageAccountType')]"
+                        }
+                    }
+                },
+                "networkProfile": {
+                    "networkInterfaces": [
+                        {
+                            "id": "[resourceId('Microsoft.Network/networkInterfaces', variables('networkInterfaceName'))]"
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "name": "[variables('networkInterfaceName')]",
+            "type": "Microsoft.Network/networkInterfaces",
+            "apiVersion": "2016-09-01",
+            "location": "[variables('location')]",
+            "tags": "[parameters('tagValues')]",
+            "properties": {
+                "ipConfigurations": [
+                    {
+                        "name": "primary",
+                        "properties": {
+                            "subnet": {
+                                "id": "[variables('subnetRef')]"
+                            },
+                            "privateIPAllocationMethod": "static",
+                            "privateIPAddress": "[parameters('privateIpAddress')]",
+                            "privateIPAddressVersion": "IPv4"
+                        }
+                    }
+                ],
+                "networkSecurityGroup": {
+                    "id": "[resourceId(parameters('virtualNetworkResourceGroup'), 'Microsoft.Network/networkSecurityGroups', parameters('networkSecurityGroups'))]"
+                }
+            }
+        },
+        {
+           "name": "[variables('extensionName')]",
+           "type": "Microsoft.Compute/virtualMachines/extensions",
+           "apiVersion": "2016-04-30-preview",
+           "location": "[variables('location')]",
+           "tags": "[parameters('tagValues')]",
+           "dependsOn": [
+             "[concat('Microsoft.Compute/virtualMachines/', parameters('virtualMachineName'))]"
+             ],
+            "properties": {
+              "publisher": "Microsoft.Azure.Extensions",
+              "type": "CustomScript",
+              "typeHandlerVersion": "2.0",
+              "autoUpgradeMinorVersion": true,
+              "settings": {
+                "fileUris": "[variables('post-script').scripts]",
+                "commandToExecute": "[variables('post-script').commandToRun]"
+              }
+            }
+        }
+    ],
+    "outputs": {
+        "adminUsername": {
+            "type": "string",
+            "value": "[parameters('adminUsername')]"
+        }
+    }
+}

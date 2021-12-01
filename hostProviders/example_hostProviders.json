@@ -1,0 +1,46 @@
+{
+    "providers":[
+        {
+            "name": "openstack",
+            "type": "openstackProv",
+            "confPath": "resource_connector/openstack",
+            "scriptPath": "resource_connector/openstack"
+        },
+        {
+            "name": "aws",
+            "type": "awsProv",
+            "confPath": "resource_connector/aws",
+            "scriptPath": "resource_connector/aws"
+        },
+        {
+            "name": "azure",
+            "type": "azureProv",
+            "confPath": "resource_connector/azure",
+            "scriptPath": "resource_connector/azure"
+        },
+        {
+            "name": "google",
+            "type": "googleProv",
+            "confPath": "resource_connector/google",
+            "scriptPath": "resource_connector/google"
+        },
+        {
+            "name": "cyclecloud",
+            "type": "cyclecloudProv",
+            "confPath": "resource_connector/cyclecloud",
+            "scriptPath": "resource_connector/cyclecloud"
+        },
+        {
+            "name": "ibmcloudgen2",
+            "type": "ibmcloudgen2Prov",
+            "confPath": "resource_connector/ibmcloudgen2",
+            "scriptPath": "resource_connector/ibmcloudgen2"
+        },
+        {
+            "name": "openshift",
+            "type": "openshiftProv",
+            "confPath": "resource_connector/openshift",
+            "scriptPath": "resource_connector/openshift"
+        }
+    ]
+}

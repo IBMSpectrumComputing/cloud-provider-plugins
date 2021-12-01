@@ -1,0 +1,13 @@
+kind: RoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: lsf-rc-bind
+  namespace: @_NAMESPACE_@
+subjects:
+  - kind: ServiceAccount
+    name: @_SA_NAME_@
+    namespace: @_NAMESPACE_@
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: lsf-rc-role

@@ -1,0 +1,7 @@
+{
+  "IBMCLOUDGEN2_KEY_FILE": "/opt/ibm/lsf/conf/resource_connector/ibmcloudgen2/credentials",
+  "IBMCLOUDGEN2_SSH_FILE": "/opt/ibm/lsf/conf/resource_connector/ibmcloudgen2/id_rsa",
+  "IBMCLOUDGEN2_PROVISION_FILE": "/opt/ibm/lsf/conf/resource_connector/ibmcloudgen2/user_data.sh",
+  "IBMCLOUDGEN2_MACHINE_PREFIX": "lsf-rc",
+  "LogLevel": "INFO"
+}

@@ -1,0 +1,28 @@
+{
+  "UserDefinedScriptPath": "/usr/share/lsf/policy.py",
+  "Policies":
+  [
+    {
+      "Name": "Policy1",
+      "Consumer": 
+      {
+        "rcAccount": ["all"],
+        "templateName": ["all"],
+        "provider": ["all"]      
+      },      
+      "MaxNumber": "100",  
+      "StepValue": "5:10"      
+    },
+    {
+      "Name": "Policy2",
+      "Consumer": 
+       {
+        "rcAccount": ["default", "project1"],
+        "templateName": ["Template-VM-1"],
+        "provider": ["aws"] 
+       },      
+      "MaxNumber": "50",      
+      "StepValue": "5:20"   
+    }
+  ]
+}

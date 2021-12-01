@@ -1,0 +1,49 @@
+
+**************************************************************
+
+Usage:  java -jar CycleCloudTool.jar [options] [json file]
+
+--------------------------------------------------------------
+
+Options:
+
+    -n or --nodes
+    Retrieve information about the available nodes from the 
+    cycle cloud.
+
+    -t or --templates
+    Retrieve information about the available templates from the 
+    cycle cloud.
+
+    -d or –dropped
+    Retrieve the terminated nodes.
+
+    -c or --create
+    Create nodes from the cycle cloud.
+
+    -r or --return
+    Return nodes back to the cycle cloud.
+
+    -s or --status
+    Retrieve status of nodes creation and termination.
+
+    -h or --help
+    Print usage.
+
+--------------------------------------------------------------
+
+Json file:
+
+    Specify the json file used by the provider API.
+
+--------------------------------------------------------------
+
+Environment variables to be set:
+
+    PRO_DATA_DIR
+    Provider data directory.
+
+    PRO_CONF_DIR
+    Provider configuration directory.
+
+**************************************************************

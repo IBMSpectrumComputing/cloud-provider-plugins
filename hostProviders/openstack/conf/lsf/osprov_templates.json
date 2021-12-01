@@ -1,0 +1,34 @@
+{
+  "Templates":
+  [
+    {
+      "Name": "TemplateA",
+      "Attributes": 
+      {
+        "type": ["String", "X86_64"],
+        "ncores": ["Numeric", "1"],
+        "ncpus": ["Numeric", "1"],
+        "mem": ["Numeric", "1024"],
+        "openstackhost": ["Boolean", "1"]
+      },
+      "Image": "CentOS-6.x-LSF-x86_64",
+      "Flavor": "lsf.small",
+      "MaxNumber": "0"
+    },
+    {
+      "Name": "TemplateB",
+      "Attributes":
+      {
+        "type": ["String", "X86_64"],
+        "ncores": ["Numeric", "2"],
+        "ncpus": ["Numeric", "1"],
+        "mem": ["Numeric", "2048"],
+        "openstackhost": ["Boolean", "1"]
+      },
+      "Image": "CentOS-6.x-LSF-x86_64",
+      "Flavor": "lsf.big",
+      "MaxNumber": "0",
+      "UserData": "packages=gcc,g++;logfile=/var/install.log"
+    }
+  ]
+}

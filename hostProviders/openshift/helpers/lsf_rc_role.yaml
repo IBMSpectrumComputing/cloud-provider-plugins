@@ -1,0 +1,35 @@
+
+kind: Role
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  annotations:
+  name: lsf-rc-role
+  namespace: @_NAMESPACE_@
+rules:
+  - verbs:
+      - list
+      - update
+      - edit
+      - delete
+      - get
+      - watch
+      - patch
+      - create
+    apiGroups:
+      - ''
+    resources:
+      - pods
+  - verbs:
+      - list
+      - get
+      - watch
+    apiGroups:
+      - ''
+    resources:
+      - nodes
+  - verbs:
+      - use
+    apiGroups:
+      - security.openshift.io
+    resources:
+      - securitycontextconstraints

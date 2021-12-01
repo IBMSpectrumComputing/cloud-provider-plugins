@@ -1,0 +1,48 @@
+{
+    "templates": [
+        {
+            "templateId": "Template-VM-0",
+            "maxNumber": 0,
+            "attributes": {
+                "type": ["String", "X86_64"],
+                "ncores": ["Numeric", "4"],
+                "ncpus": ["Numeric", "4"],
+                "mem": ["Numeric", "8192"],
+                "azurehost": ["Boolean", "1"],
+                "zone": ["String", "asiasoutheast"]
+            },
+            "imageId": "lsfimage",
+            "storageAccountType": "STANDARD_LRS",
+            "vmType": "Standard_A4_v2",
+            "resourceGroup": "lsf_hostfactory",
+            "virtualNetwork": "lsfnet",
+            "subnet": "subnet1",
+            "securityGroup": "lsfsecuritygrp",
+            "sshPubKeyFile": "/home/lsfadmin/lsf.pub",
+            "customScriptUri": "http://10.1.0.4/user_data.sh",
+            "instanceTags": "group=project1"
+        },
+        {
+            "templateId": "Template-VM-1",
+            "maxNumber": 0,
+            "attributes": {
+                "type": ["String", "X86_64"],
+                "ncores": ["Numeric", "4"],
+                "ncpus": ["Numeric", "4"],
+                "mem": ["Numeric", "8192"],
+                "azurehost": ["Boolean", "1"],
+                "zone": ["String", "asiasoutheast"]
+            },
+            "imageId": "lsfimage",
+            "storageAccountType": "STANDARD_LRS",
+            "vmType": "Standard_A4_v2",
+            "resourceGroup": "lsf_hostfactory",
+            "virtualNetwork": "lsfnet",
+            "subnet": "subnet2",
+            "securityGroup": "lsfsecuritygrp",
+            "sshPubKeyFile": "/home/lsfadmin/lsf.pub",
+            "customScriptUri": "http://10.1.0.4/user_data.sh",
+            "instanceTags": "group=project1"
+        }
+    ]
+}

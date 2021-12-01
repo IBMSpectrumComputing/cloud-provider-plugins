@@ -1,0 +1,31 @@
+{
+    "messages": {
+        "0": "OK",
+        "1": "Internal server error.",
+        "2": "No content.",
+        "3": "The file [ %s ] does not exist.",
+        "4": "The file [ %s ] is not a valid JSON format file.",
+        "5": "This interface is not supported by this provider.",
+        "6": "Invalid template.",
+        "7": "The template with ID [ %s ] does not exist.",
+        "8": "The node count is invalid.",
+        "9": "Failed to get response from the cycle cloud.",
+        "10": "Unrecognized response from the cycle cloud.",
+        "11": "Failed to request RESTful API:\n%s %s\n%s",
+        "12": "Unsupported request [ %s ].",
+        "13": "Some machines have errors.",
+        "14": "The machine creation has encountered an error.",
+        "15": "The machine termination has encountered an error.",
+        "16": "Invalid option.",
+        "17": "Unrecognized json string: \n%s",
+        "18": "Failed to read file [ %s ]",
+        "19": "Failed to execute service API [ %s ]\n%s",
+        "20": "The data directory is not specified by environment variable %s",
+        "21": "The configuration directory is not specified by environment variable %s",
+        "22": "Failed to create file [ %s ]",
+        "23": "Can not find the Cycle Cloud API with code [ %s ]",
+        "24": "Machine creation timeout.",
+        "25": "Machine termination timeout.",
+        "26": "Some machines do not exist in the Cycle Cloud."
+    }
+}

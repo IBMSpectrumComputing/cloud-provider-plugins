@@ -1,0 +1,20 @@
+{
+    "templates": [{
+        "templateId": "Template-VM-1",
+        "maxNumber": 0,
+        "attributes": {
+            "type": ["String", "X86_64"],
+            "ncores": ["Numeric", "4"],
+            "ncpus": ["Numeric", "4"],
+            "mem": ["Numeric", "8192"],
+            "cyclecloudhost": ["Boolean", "1"],
+            "zone": ["String", "eastus"]
+        },
+        "imageId": "lsfimage",
+        "subnetId": "subnet1",
+        "vmType": "Standard_A4_v2",
+        "keyPairLocation": "~/.ssh/cyclecloud.pem",
+        "customScriptUri": "http://10.1.0.4/user_data.sh",
+        "userData": "zone=eastus"
+    }]
+}

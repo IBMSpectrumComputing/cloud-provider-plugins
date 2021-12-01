@@ -1,0 +1,21 @@
+{
+    "templates": [
+        {
+            "templateId": "Template-VM-1",
+            "maxNumber": 2,
+            "attributes": {
+                "type": ["String", "X86_64"],
+                "ncores": ["Numeric", "1"],
+                "ncpus": ["Numeric", "1"],
+                "nthreads": ["Numeric", "1"],
+                "mem": ["Numeric", "728"],
+                "googlehost": ["Boolean", "1"]
+            },
+            "imageId": "lsfimage",
+            "vmType": "f1-micro",            
+            "zone": "us-central1-f",
+            "instanceTags" : "team=dev8",
+            "userData": "team=dev8"
+        }
+    ]
+}

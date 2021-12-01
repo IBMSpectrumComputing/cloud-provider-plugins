@@ -1,0 +1,5 @@
+{
+  "LogLevel": "INFO",
+  "GCLOUD_PROJECT_ID": "hostfactory-179005",
+  "GCLOUD_CREDENTIAL_FILE": "/usr/share/lsf/conf/resource_connector/google/conf/service_acount_secret.json"
+}

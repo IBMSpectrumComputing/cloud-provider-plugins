@@ -1,0 +1,5 @@
+{
+  "LogLevel": "INFO",  
+  "AZURE_CREDENTIAL_FILE": "/home/lsfadmin/credentials",
+  "AZURE_REGION": "southeastasia"
+}
