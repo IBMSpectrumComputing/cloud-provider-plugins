@@ -1,2 +1,2 @@
-# lsf-resource-connector-plugins
+# resource-connector-plugins
  Location of cloud provider plugins for LSF Resource Connector
