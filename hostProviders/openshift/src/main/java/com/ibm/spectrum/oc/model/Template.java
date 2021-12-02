@@ -70,6 +70,9 @@ public class Template {
     private HashMap<String, String> mountPaths;
     private HashMap<String, String> nodeSelectors;
 
+    @JsonInclude(Include.NON_NULL)
+    private Boolean privileged;
+
     /**
      * <p>Title: </p>
      * <p>Description: </p>
@@ -260,6 +263,14 @@ public class Template {
         }
     }
 
+    public Boolean getPrivileged() {
+        return privileged;
+    }
+
+    public void setPrivileged(Boolean privileged) {
+        this.privileged = privileged;
+    }
+
     /** (Non Javadoc)
     * <p>Title: toString</p>
     * <p>Description: </p>
@@ -295,6 +306,8 @@ public class Template {
         builder.append(mountPaths);
         builder.append(", nodeSelectors=");
         builder.append(nodeSelectors);
+        builder.append(", privileged=");
+        builder.append(privileged);
         builder.append("]");
         return builder.toString();
     }

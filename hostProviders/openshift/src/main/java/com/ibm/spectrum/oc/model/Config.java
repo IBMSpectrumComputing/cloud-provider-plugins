@@ -76,6 +76,9 @@ public class Config {
     @JsonInclude(Include.NON_NULL)
     private HashMap<String, String> envVars;
 
+    @JsonProperty("LSF_MAX_TRY_ADD_HOST")
+    @JsonInclude(Include.NON_NULL)
+    private Integer maxTryAddHost;
     /**
     * <p>Title: </p>
     * <p>Description: </p>
@@ -200,6 +203,14 @@ public class Config {
         }
     }
 
+    public Integer getMaxTryAddHost() {
+        return maxTryAddHost;
+    }
+
+    public void setMaxTryAddHost(Integer maxTryAddHost) {
+        this.maxTryAddHost = maxTryAddHost;
+    }
+
     /** (Non Javadoc)
     * <p>Title: toString</p>
     * <p>Description: </p>
@@ -233,6 +244,8 @@ public class Config {
         builder.append(timeoutInSec);
         builder.append(", envVars=");
         builder.append(envVars);
+        builder.append(", maxTryAddHost=");
+        builder.append(maxTryAddHost);
         builder.append("]");
         return builder.toString();
     }

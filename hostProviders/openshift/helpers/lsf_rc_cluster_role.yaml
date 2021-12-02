@@ -15,3 +15,5 @@ rules:
       - ''
     resources:
       - persistentvolumeclaims
+      - configmaps
+      - secrets

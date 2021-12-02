@@ -47,6 +47,14 @@ import io.kubernetes.client.openapi.models.V1PersistentVolumeClaimVolumeSource;
 import io.kubernetes.client.openapi.models.V1PersistentVolumeClaimSpec;
 import io.kubernetes.client.openapi.models.V1PersistentVolumeClaimList;
 import io.kubernetes.client.openapi.models.V1EnvVar;
+import io.kubernetes.client.openapi.models.V1ConfigMap;
+import io.kubernetes.client.openapi.models.V1ConfigMapKeySelector;
+import io.kubernetes.client.openapi.models.V1ConfigMapList;
+import io.kubernetes.client.openapi.models.V1KeyToPath;
+import io.kubernetes.client.openapi.models.V1ConfigMapVolumeSource;
+import io.kubernetes.client.openapi.models.V1SecretList;
+import io.kubernetes.client.openapi.models.V1Secret;
+import io.kubernetes.client.openapi.models.V1SecretVolumeSource;
 import io.kubernetes.client.custom.V1Patch;
 
 import io.kubernetes.client.openapi.models.V1Pod;
@@ -64,10 +72,11 @@ public class Client {
     private  CoreV1Api api = null;
     private String namespace = null;
     private String serviceAccount = null;
-
     boolean isDebugging = false;
     boolean isWaitPodIp = false;
-
+    Map<String, V1PersistentVolumeClaimStatus> pvcsMap = null;
+    Map<String, Map<String, String>> configsMap = null;
+    Map<String, Map<String, byte[]>> secretsMap = null;
     public Client() {
         try {
 
@@ -262,6 +271,13 @@ public class Client {
         sb.append(" fi; ");
         sb.append(tmplAttrs.toString());
         sb.append("sed -i -e \'$ a LSF_GET_CONF=lim\' ${lsf_conf_file};");
+        if (Util.getConfig().getMaxTryAddHost() != null
+                && Util.getConfig().getMaxTryAddHost().intValue() >= 0) {
+            int maxTryAddHost = Util.getConfig().getMaxTryAddHost().intValue();
+            if (maxTryAddHost > Util.LSF_MAX_TRY_ADD_HOST) {
+                sb.append("sed -i -e \'$ a LSF_MAX_TRY_ADD_HOST=" + maxTryAddHost + "' ${lsf_conf_file};");
+            }
+        }
         sb.append("sed -i -e \'$ a LSF_LOCAL_RESOURCES=\"[resource openshift]");
         sb.append(" [resourcemap \'\"${rc_account}\"\'*rc_account]");
         sb.append(" [resourcemap \'\"${clusterName}\"\'*clusterName]");
@@ -352,13 +368,17 @@ public class Client {
                     envs.add(var1);
                 }
             }
+            boolean isPrivileged = false;
+            if (t.getPrivileged() != null) {
+                isPrivileged = t.getPrivileged();
+            }
             V1Capabilities capabilities = new V1Capabilities();
             List<String> capItemsAdd = Arrays.asList(new String[] {"KILL", "SETUID", "SETGID", "CHOWN", "SETPCAP", "NET_BIND_SERVICE", "DAC_OVERRIDE", "SYS_TTY_CONFIG", "SYS_RAWIO"});
             List<String> capItemsDrop = Arrays.asList(new String[] {"ALL"});
             capabilities.add(capItemsAdd);
             capabilities.drop(capItemsDrop);
             securityContext.setCapabilities(capabilities);
-            securityContext.setPrivileged(false);
+            securityContext.setPrivileged(isPrivileged);
             String cmdArgs = getCmdArgs(attributes, t, rc_account);
             if (!(cmdArgs == null
                     || cmdArgs.isEmpty())) {
@@ -424,22 +444,41 @@ public class Client {
                 spec.setNodeSelector(nodeSelectors);
             }
             Map<String, String> mountPaths = t.getMountPaths();
-            Map<String, V1PersistentVolumeClaimStatus> pvcMap = null;
+            Map<String, V1PersistentVolumeClaimStatus> pPvcsMap = null;
+            Map<String, Map<String, String>> pConfigsMap = null;
+            Map<String,  Map<String, byte[]>> pSecretsMap = null;
             List<V1Volume> volList = null;
             List<V1VolumeMount> volumeMounts = null;
             if (mountPaths != null
                     && ! mountPaths.isEmpty()) {
-                pvcMap = getPVCs();
-                if (pvcMap == null
-                        || pvcMap.isEmpty()) {
+                pPvcsMap = getPVCs();
+                pConfigsMap = getConfigMaps();
+                pSecretsMap = getSecrets();
+                if (pPvcsMap == null
+                        || pPvcsMap.isEmpty()) {
                     if (log.isTraceEnabled()) {
                         log.trace("No PersistentVolumeClaims available");
                     }
-                } else {
-                    volList = getVolumes(mountPaths, pvcMap);
+                }
+                if (pConfigsMap == null
+                        || pConfigsMap.isEmpty()) {
+                    if (log.isTraceEnabled()) {
+                        log.trace("No ConfigMaps available");
+                    }
+                }
+                if (pSecretsMap == null
+                        || pSecretsMap.isEmpty()) {
+                    if (log.isTraceEnabled()) {
+                        log.trace("No Secrets available");
+                    }
+                }
+                if ((pPvcsMap != null && !(pPvcsMap.isEmpty()))
+                        || (pConfigsMap != null && !(pConfigsMap.isEmpty()))
+                        || (pSecretsMap != null && !(pSecretsMap.isEmpty()))) {
+                    volList = getVolumes(mountPaths);
                     if (volList != null
                             && volList.size() > 0) {
-                        volumeMounts = getVolumeMounts(mountPaths, pvcMap);
+                        volumeMounts = getVolumeMounts(mountPaths);
                         if (volumeMounts != null
                                 && volumeMounts.size() > 0) {
                             spec.setVolumes(volList);
@@ -682,6 +721,9 @@ public class Client {
         }
     }
     private Map<String, V1PersistentVolumeClaimStatus> getPVCs() {
+        if (this.pvcsMap != null) {
+            return this.pvcsMap;
+        }
         V1PersistentVolumeClaimList list = null;
         Map <String, V1PersistentVolumeClaimStatus> m = new HashMap<String, V1PersistentVolumeClaimStatus>();
         StringBuffer sb = new StringBuffer();
@@ -713,29 +755,147 @@ public class Client {
                     }
                 }
             }
-            return m;
+            this.pvcsMap = m;
+            return this.pvcsMap;
         } catch (Exception e) {
             log.error(e);
             return null;
         }
     }
-    private List<V1Volume> getVolumes(Map <String, String>mountPaths, Map<String, V1PersistentVolumeClaimStatus> pvcMap) {
+    private Map<String, Map<String, byte[]>> getSecrets() {
+        if (this.secretsMap != null) {
+            return this.secretsMap;
+        }
+        V1SecretList list = null;
+        Map <String, Map<String, byte[]>> m = new HashMap<String, Map<String, byte[]>>();
+        StringBuffer sb = new StringBuffer();
+        String pretty = null;
+        Boolean allowWatchBookmarks = null;
+        String _continue = null;
+        String fieldSelector = null;
+        String labelSelector = null;
+        Integer limit = null;
+        Integer timeoutSeconds= null;
+        Boolean watch = null;
+        String resourceVersion = null; // Util.OPENSHIFT_API_VERSION;
+        try {
+            if (sb.length() > 0) {
+                labelSelector = sb.toString();
+            }
+            list = api.listNamespacedSecret(namespace, pretty, allowWatchBookmarks, _continue, fieldSelector, labelSelector, limit, resourceVersion, timeoutSeconds, watch);
+            if (log.isTraceEnabled()) {
+                log.trace("secrets " + list);
+            }
+            if (list != null) {
+                for (V1Secret secret : list.getItems()) {
+                    String secretName = secret.getMetadata().getName();
+                    if (secretName != null) {
+                        m.put(secretName, secret.getData());
+                    }
+                }
+            }
+            this.secretsMap = m;
+            return this.secretsMap;
+        } catch (Exception e) {
+            log.error(e);
+            return null;
+        }
+    }
+    private Map<String, Map<String, String>> getConfigMaps() {
+        if (this.configsMap != null) {
+            return this.configsMap;
+        }
+        V1ConfigMapList list = null;
+        Map <String, Map<String,String>> m = new HashMap<String, Map<String, String>>();
+        StringBuffer sb = new StringBuffer();
+        String pretty = null;
+        Boolean allowWatchBookmarks = null;
+        String _continue = null;
+        String fieldSelector = null;
+        String labelSelector = null;
+        Integer limit = null;
+        Integer timeoutSeconds= null;
+        Boolean watch = null;
+        String resourceVersion = null; // Util.OPENSHIFT_API_VERSION;
+        try {
+            if (sb.length() > 0) {
+                labelSelector = sb.toString();
+            }
+            list = api.listNamespacedConfigMap(namespace, pretty, allowWatchBookmarks, _continue, fieldSelector, labelSelector, limit, resourceVersion, timeoutSeconds, watch);
+            if (log.isTraceEnabled()) {
+                log.trace("ConfigMaps " + list);
+            }
+            if (list != null) {
+                for (V1ConfigMap configMap : list.getItems()) {
+                    String configMapName = configMap.getMetadata().getName();
+                    if (configMapName != null) {
+                        m.put(configMapName, configMap.getData());
+                    }
+                }
+            }
+            this.configsMap = m;
+            return this.configsMap;
+        } catch (Exception e) {
+            log.error(e);
+            return null;
+        }
+    }
+
+    private List<V1Volume> getVolumes(Map <String, String>mountPaths) {
         List<V1Volume> volList = new ArrayList<V1Volume>();
         List<String> pvcList = new ArrayList<String>(mountPaths.keySet());
         String mountPath;
+        Map<String, V1PersistentVolumeClaimStatus> pPvcsMap = null;
+        Map<String, Map<String, String>> pConfigsMap = null;
+        Map<String,  Map<String, byte[]>> pSecretsMap = null;
+
         if (mountPaths == null
-                || mountPaths.isEmpty()
-                || pvcMap == null
-                || pvcMap.isEmpty()) {
+                || mountPaths.isEmpty()) {
+            return null;
+        }
+        if (this.pvcsMap != null && ! this.pvcsMap.isEmpty()) {
+            pPvcsMap = this.pvcsMap;
+        }
+        if  (this.configsMap != null && ! this.configsMap.isEmpty()) {
+            pConfigsMap = this.configsMap;
+        }
+
+        if  (this.secretsMap != null && ! this.secretsMap.isEmpty()) {
+            pSecretsMap = this.secretsMap;
+        }
+        if (pPvcsMap == null && pConfigsMap == null && pSecretsMap == null) {
             return null;
         }
         for (String pvc: pvcList) {
             try {
-                V1PersistentVolumeClaimStatus volStatus = pvcMap.get(pvc);
-                if (volStatus == null) {
-                    if (log.isTraceEnabled()) {
-                        log.trace("PersistentVolumeClaim " + pvc + " not found");
+                V1PersistentVolumeClaimStatus volStatus = null;
+                Map<String, String> configMap = null;
+                Map<String, byte[]> secret = null;
+                if (pPvcsMap != null) {
+                    volStatus = this.pvcsMap.get(pvc);
+                    if (volStatus == null) {
+                        if (log.isTraceEnabled()) {
+                            log.trace("PersistentVolumeClaim " + pvc + " not found");
+                        }
                     }
+                }
+                if (pConfigsMap != null) {
+                    configMap = this.configsMap.get(pvc);
+                    if (configMap == null) {
+                        if (log.isTraceEnabled()) {
+                            log.trace("ConfigMap " + pvc + " not found");
+                        }
+                    }
+                }
+                if (pSecretsMap != null) {
+                    secret = this.secretsMap.get(pvc);
+                    if (secret == null) {
+                        if (log.isTraceEnabled()) {
+                            log.trace("Secret " + pvc + " not found");
+                        }
+                    }
+                }
+                if (volStatus == null && configMap == null && secret == null) {
                     continue;
                 }
                 mountPath = mountPaths.get(pvc);
@@ -749,10 +909,40 @@ public class Client {
                     log.trace("mountPath configured for " + pvc + ": " + mountPath);
                 }
                 V1Volume vol = new V1Volume();
-                V1PersistentVolumeClaimVolumeSource pvcSource = new
-                V1PersistentVolumeClaimVolumeSource();
-                pvcSource.setClaimName(pvc);
-                vol.setPersistentVolumeClaim(pvcSource);
+                if (volStatus != null) {
+                    V1PersistentVolumeClaimVolumeSource pvcSource = new
+                    V1PersistentVolumeClaimVolumeSource();
+                    pvcSource.setClaimName(pvc);
+                    vol.setPersistentVolumeClaim(pvcSource);
+                } else if (configMap != null) {
+                    V1ConfigMapVolumeSource configSource = new V1ConfigMapVolumeSource();
+                    Integer defaultMode = 384;
+                    //List<V1KeyToPath> items = new ArrayList<V1KeyToPath>();
+                    //V1KeyToPath aKey = new V1KeyToPath();
+                    //aKey.setKey(pvc);
+                    //aKey.setMode(defaultMode);
+                    //aKey.setPath(mountPath);
+                    ///items.add(aKey);
+                    //configSource.setItems(items);
+                    configSource.setName(pvc);
+                    configSource.setDefaultMode(defaultMode);
+                    vol.setConfigMap(configSource);
+                } else if (secret != null) {
+                    V1SecretVolumeSource secretSource = new V1SecretVolumeSource();
+                    Integer defaultMode = 384;
+                    //List<V1KeyToPath> items = new ArrayList<V1KeyToPath>();
+                    //V1KeyToPath aKey = new V1KeyToPath();
+                    //aKey.setKey(pvc);
+                    //aKey.setMode(defaultMode);
+                    //aKey.setPath(mountPath);
+                    //items.add(aKey);
+                    //secretSource.setItems(items);
+                    secretSource.setSecretName(pvc);
+                    secretSource.setDefaultMode(defaultMode);
+                    vol.setSecret(secretSource);
+                } else {
+                    continue;
+                }
                 vol.setName(pvc);
                 volList.add(vol);
             } catch (Exception e) {
@@ -762,22 +952,31 @@ public class Client {
         } // for mountVolumeList
         return volList;
     }
-    private List<V1VolumeMount> getVolumeMounts(Map <String, String>mountPaths, Map<String, V1PersistentVolumeClaimStatus> pvcMap) {
+    private List<V1VolumeMount> getVolumeMounts(Map <String, String>mountPaths) {
         List<V1VolumeMount> mountList = new ArrayList<V1VolumeMount>();
         List<String> pvcList = new ArrayList<String>(mountPaths.keySet());
         String mountPath;
         if (mountPaths == null
-                || mountPaths.isEmpty()
-                || pvcMap == null
-                || pvcMap.isEmpty()) {
+                || mountPaths.isEmpty()) {
             return null;
         }
         for (String pvc: pvcList) {
             try {
-                V1PersistentVolumeClaimStatus volStatus = pvcMap.get(pvc);
-                if (volStatus == null) {
+                V1PersistentVolumeClaimStatus volStatus = null;
+                Map<String, String> configMap = null;
+                Map<String, byte[]> secret = null;
+                if (this.pvcsMap != null && ! this.pvcsMap.isEmpty()) {
+                    volStatus = this.pvcsMap.get(pvc);
+                }
+                if (this.configsMap != null && ! this.configsMap.isEmpty()) {
+                    configMap = this.configsMap.get(pvc);
+                }
+                if (this.secretsMap != null && ! this.secretsMap.isEmpty()) {
+                    secret = this.secretsMap.get(pvc);
+                }
+                if (volStatus == null && configMap == null && secret == null ) {
                     if (log.isTraceEnabled()) {
-                        log.trace("PersistentVolumeClaim " + pvc + " not found");
+                        log.trace(pvc + " not found in PersistentVolumeClaims,ConfigMaps, and secrets.");
                     }
                     continue;
                 }

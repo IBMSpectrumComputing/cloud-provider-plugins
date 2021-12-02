@@ -128,6 +128,7 @@ public class Util {
     public static final int REQUEST_VALIDITY_MINUTES = 30;
     public static final int INSTANCE_CREATION_TIMEOUT_MINUTES = 10;
     public static final int MAX_TIMEOUT_SECONDS = 3600;
+    public static final int LSF_MAX_TRY_ADD_HOST = 20;
 
     private static Logger log = LogManager.getLogger(Util.class);
 

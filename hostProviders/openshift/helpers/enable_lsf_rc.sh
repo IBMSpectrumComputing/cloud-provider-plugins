@@ -234,6 +234,11 @@ rollback_conf_bak()
 	sed -i -e '/"TIMEOUT_IN_SEC"/d' ${rc_conf_filepath}
 	sed -i -e '/"NAME_SPACE":/a "TIMEOUT_IN_SEC": "'"${timeout_in_sec}"'",' ${rc_conf_filepath}
     fi
+    # LSF_MAX_TRY_ADD_HOST
+    if [ "x${max_try_add_host}" != "x" ]; then 
+	sed -i -e '/"LSF_MAX_TRY_ADD_HOST"/d' ${rc_conf_filepath}
+	sed -i -e '/"NAME_SPACE":/a "LSF_MAX_TRY_ADD_HOST": "'"${max_try_add_host}"'",' ${rc_conf_filepath}
+    fi
     if [ "x${userauth_args}" != "x" -o "x${userauth_starts}" != "x" ]; then
 	hasEnvVars=\`sed -n -e '/"ENV_VARS":/p' ${rc_conf_filepath}\`
 	if [ "x\${hasEnvVars}" = "x" ]; then
@@ -458,8 +463,8 @@ ENDPROV
     fi
 
     if [[ "$_java" ]]; then
-	version=$("$_java" -version 2>&1 | awk -F '"' '/version/ {print $2}')
-	if [[ "$version" < "1.8" ]]; then
+	version=$("$_java" -version 2>&1 | awk -F '"' '/version/ {print $2}'|cut -f1-2 -d .)
+	if (( $(echo "$version < 1.8" |bc -l) )); then
 	    echoErr "OpenShift provider plugin requires Java version 1.8 or up"
 	    exit 1
 	fi
@@ -575,6 +580,7 @@ rc_tar_filepath=
 operator_cluster=
 wait_pod_ip=
 timeout_in_sec=
+max_try_add_host=1000
 oc_command=oc
 userauth_args=
 userauth_starts=
@@ -606,6 +612,10 @@ if [ $# -gt 1 ]; then
             ;;
             -t)
             timeout_in_sec="$2"
+            shift
+            ;;
+            -m)
+            max_try_add_host="$2"
             shift
             ;;
             *)
@@ -651,6 +661,11 @@ if [ ${timeout_in_sec} -lt 0 -o ${timeout_in_sec} -gt 3600 ]; then
 fi
 fi
 
+if [ "x${max_try_add_host}" != "x" ]; then
+if [ ${max_try_add_host} -lt 20 -o ${max_try_add_host} -gt 7200 ]; then
+    fail_and_exit "-m <max_try_add_host> is not valid. <max_try_add_host> must be a non-negative integer between 20 and 7200."
+fi
+fi
 setup
 rm -rf $MYTMP
 exit 0
