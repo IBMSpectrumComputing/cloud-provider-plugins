@@ -46,46 +46,53 @@ LSF_TOP
 
 ```
 # Interfaces between ebrokerd
-There are 5 shell scripts that must be implemented for a new plugin. The ebrokerd daemon invoke those scripts periodically, with parameter "-f <input.json>". Each script exit with 0 if calling succeed and result will be in the stdOut. Otherwise exit with 1 if calling failed and error message will be in the stdOut.
+There are 5 shell scripts that must be implemented for a new plugin. The ebrokerd daemon invoke those scripts periodically, with parameter "-f <input.json>". Each script exit with 0 if calling succeed and result will be in the std out. Otherwise exit with 1 if calling failed and error message will be in the std out.
 
 ## getAvailableTemplates.sh
+Parse the template configuration file in <LSF_TOP>/conf/resource_connector/<provider_name>/conf/<prov>_templates.json.
 
-sample input.json
+sample input json file content
 ```
 { }
 ```
 
-sample output json to stdOut
+sample output json to std out.
 ```
 { "templates": [ { "templateId": "Template-VM-1", "maxNumber": 200, "attributes": { "mem": [ "Numeric", "8192" ], "ncpus": [ "Numeric", "1" ], "zone": [ "String", "asiasoutheast" ], "azurehost": [ "Boolean", "1" ], "ncores": [ "Numeric", "1" ], "type": [ "String", "X86_64" ] }, "instanceTags": "group=LSF2"} ] }
 ```
 
 ## requestMachines.sh
-sample input.json
+Request to create instances from cloud. 
+
+sample input json file content
 ```
 { "template": { "templateId": "Template-VM-1", "machineCount": 1 }, "rc_account": "default", "userData": { } }
 ```
-sample output json to stdOut
+sample output json to std out.
 ```
 { "message": "RequestVM success from azure.", "requestId": "c95595c4-0c07-4eb2-8c0c-94f364ac8e76" }
 ```
+
 ## requestReturnMachines.sh
-sample input.json
+Request to terminate instance on cloud.
+
+sample input json file content
 ```
 { "machines": [ { "name": "host-10-1-1-36", "machineId": "4fa69d720e06c50a89fb" } ] }
 ```
-sample output json to stdOut
+sample output json to stdout
 ```
 { "message": "Request to terminate instances successful.", "requestId": "5f6a3f07-840e-4fa6-9d72-0e06c50a89fb" }
 ```
 
 ## getRequestStatus.sh
+Get the request status for a request. The request can be either a create instances request or a terminate instances request.
 
-sample input.json
+sample input json file content
 ```
 { "requests": [ { "requestId": "7de9425e-6be8-4e50-8dc7-dbcab7ec3102" } ] }
 ```
-sample output json to stdOut
+sample output json to std out
 ```
 { "requests": [ { "status": "complete", "machines": [ { "machineId": "4e508dc7dbcab7ec3102", "name": "host-10-100-2-118", "result": "succeed", "status": "deallocated", "privateIpAddress": "10.100.2.118", "rcAccount": "default", "message": "", "launchtime": 1494001568 } ], "requestId": "7de9425e-6be8-4e50-8dc7-dbcab7ec3102", "message": "" } ] }
 ```
@@ -99,13 +106,14 @@ Valid value for an instance **result**:
 2. other: The instances is still in provision or in shutting-down status.
 
 ## getReturnRequests.sh
+Check whether any of the instances in the input json file is terminated.
 
-sample input.json
+sample input json file content
 ```
-{ "machines": [ { "name": "host-10-1-1-36", "machineId": "4fa69d720e06c50a89fb" } ] }
+{ "machines": [ { "name": "host-10-1-1-36", "machineId": "4fa69d720e06c50a89fb" }, { "name": "host-10-1-1-37", "machineId": "9fas9d720e06c50a782b" } ] }
 ```
-sample output json to stdOut
- if there are some instances are terminated by cloud, such as aws spot instances.
+sample output json to std out
+ if there an instance is terminated by cloud, such as aws spot instances.
 ```
 { "requests": [ { "machine": "host-10-1-1-36", "machineId": "4fa69d720e06c50a89fb" } ] }
 ```
