@@ -20,10 +20,14 @@ else
     exit 1
 fi
  
+if ! which bc > /dev/null; then
+   echo -e "Command bc not found! please install \c"
+fi
+
 if [[ "$_java" ]]; then
-    version=$("$_java" -version 2>&1 | awk -F '"' '/version/ {print $2}')
+    version=$("$_java" -version 2>&1 | awk -F '"' '/version/ {print $2}'|cut -f1-2 -d .)
     #echo version "$version"
-    if [[ "$version" < "1.8" ]]; then
+    if (( $(echo "$version < 1.8" |bc -l) )); then
         echo "Java version error. Azure provider plugin requires Java version 1.8 or up"
         exit 1
     fi  
