@@ -1,8 +1,9 @@
+
 # resource-connector-plugins
-This is the location of cloud provider plugins for [LSF Resource Connector](https://www.ibm.com/docs/en/spectrum-lsf/10.1.0?topic=lsf-resource-connnector). Refer to [LSF Resource Connector](https://www.ibm.com/docs/en/spectrum-lsf/10.1.0?topic=lsf-resource-connnector) how LSF Resource Connector works, and how to configure each cloud providers.
+This is the location of cloud provider plug-ins for the [LSF resource connector](https://www.ibm.com/docs/en/spectrum-lsf/10.1.0?topic=lsf-resource-connnector). For more information on how the LSF resource connector works, and how to configure each cloud provider, refer to [LSF resource connector](https://www.ibm.com/docs/en/spectrum-lsf/10.1.0?topic=lsf-resource-connnector).
 
 # install
-Sample install directory for cloud provider plugins under LSF.
+The following is a sample installation directory for cloud provider plug-ins under LSF:
 ```
 LSF_TOP
 |-- 10.1
@@ -46,41 +47,43 @@ LSF_TOP
 
 ```
 # Interfaces between ebrokerd
-There are 5 shell scripts that must be implemented for a new plugin. The ebrokerd daemon invoke those scripts periodically, with parameter "-f <input.json>". Each script exit with 0 if calling succeed and result will be in the std out. Otherwise exit with 1 if calling failed and error message will be in the std out.
+There are 5 shell scripts that you must implement for a new plug-in. The ebrokerd daemon periodically invokes these scripts with the "-f <input.json>" option. Each script exits with return code 0 if the call succeeds and the result is in stdout. Otherwise, the script exits with return code 1 if the call fails and the error message is in stdout.
 
 ## getAvailableTemplates.sh
-Parse the template configuration file in <LSF_TOP>/conf/resource_connector/<provider_name>/conf/<prov>_templates.json.
+Parse the template configuration file in <LSF_TOP>/conf/resource_connector/<provider_name>/conf/\<prov\>_templates.json.
 
-sample input json file content
+The following is an example of content of an input JSON file:
 ```
 { }
 ```
 
-sample output json to std out.
+The following is an example of content of JSON output to stdout:
 ```
 { "templates": [ { "templateId": "Template-VM-1", "maxNumber": 200, "attributes": { "mem": [ "Numeric", "8192" ], "ncpus": [ "Numeric", "1" ], "zone": [ "String", "asiasoutheast" ], "azurehost": [ "Boolean", "1" ], "ncores": [ "Numeric", "1" ], "type": [ "String", "X86_64" ] }, "instanceTags": "group=LSF2"} ] }
 ```
 
 ## requestMachines.sh
-Request to create instances from cloud. 
+Request to create instances from the cloud. 
 
-sample input json file content
+The following is an example of the content of an input JSON file:
 ```
 { "template": { "templateId": "Template-VM-1", "machineCount": 1 }, "rc_account": "default", "userData": { } }
 ```
-sample output json to std out.
+
+The following is an example of JSON output to stdout:
 ```
-{ "message": "RequestVM success from azure.", "requestId": "c95595c4-0c07-4eb2-8c0c-94f364ac8e76" }
+{ "message": "RequestVM succeeded from Azure.", "requestId": "c95595c4-0c07-4eb2-8c0c-94f364ac8e76" }
 ```
 
 ## requestReturnMachines.sh
-Request to terminate instance on cloud.
+Request to terminate instances on the cloud.
 
-sample input json file content
+The following is an example of content of an input JSON file:
 ```
 { "machines": [ { "name": "host-10-1-1-36", "machineId": "4fa69d720e06c50a89fb" } ] }
 ```
-sample output json to stdout
+
+The following is an example of example JSON output to stdout:
 ```
 { "message": "Request to terminate instances successful.", "requestId": "5f6a3f07-840e-4fa6-9d72-0e06c50a89fb" }
 ```
@@ -88,52 +91,54 @@ sample output json to stdout
 ## getRequestStatus.sh
 Get the request status for a request. The request can be either a create instances request or a terminate instances request.
 
-sample input json file content
+The following is an example of the content of an input JSON file:
 ```
 { "requests": [ { "requestId": "7de9425e-6be8-4e50-8dc7-dbcab7ec3102" } ] }
 ```
-sample output json to std out
+
+The following is an example of JSON output to stdout:
 ```
-{ "requests": [ { "status": "complete", "machines": [ { "machineId": "4e508dc7dbcab7ec3102", "name": "host-10-100-2-118", "result": "succeed", "status": "deallocated", "privateIpAddress": "10.100.2.118", "rcAccount": "default", "message": "", "launchtime": 1494001568 } ], "requestId": "7de9425e-6be8-4e50-8dc7-dbcab7ec3102", "message": "" } ] }
+{ "requests": [ { "status": "complete", "machines": [ { "machineId": "4e508dc7dbcab7ec3102", "name": "host-10-100-2-118", "result": "succeed", "status": "RUNNING", "privateIpAddress": "10.100.2.118", "rcAccount": "default", "message": "", "launchtime": 1494001568 } ], "requestId": "7de9425e-6be8-4e50-8dc7-dbcab7ec3102", "message": "" } ] }
 ```
-Valid value for a request **status**:
-1. complete: the request is complete. For create instances request, it means the required number of instances are created. For terminate instance request, it means some instances are all terminated on cloud.
+
+The following are valid values for a request **status**:
+1. complete: the request is complete. For create instances request, it means the required number of instances are created. For terminate instance request, it means the related instances are all terminated on cloud.
 2. running:  the request is still in process.
 3. complete_with_error: the request is complete, but some instances are failed. For example, it request to create 10 instances in a request. 9 instances are created successfully, but 1 instance is created failed.
 
-Valid value for an instance **result**:
+The following are valid values for an instance **result**:
 1. succeed: For create instance request, it means the instance is created  successfully. For terminate instance request, it means the instance is terminated successfully.
-2. other: The instances is still in provision or in shutting-down status.
+2. executing:  The instance is still in provision or in shutting-down status.
+3. fail: The instance is failed to create or termiante.
 
 ## getReturnRequests.sh
-Check whether any of the instances in the input json file is terminated.
+Check whether any of the instances in the input JSON file are terminated.
 
-sample input json file content
+The following is an example of the content of an input JSON file:
 ```
 { "machines": [ { "name": "host-10-1-1-36", "machineId": "4fa69d720e06c50a89fb" }, { "name": "host-10-1-1-37", "machineId": "9fas9d720e06c50a782b" } ] }
 ```
-sample output json to std out
- if there an instance is terminated by cloud, such as aws spot instances.
+The following is an example of JSON output to stdout if the cloud terminated any instances, such as AWS spot instances.
+
 ```
 { "requests": [ { "machine": "host-10-1-1-36", "machineId": "4fa69d720e06c50a89fb" } ] }
 ```
-Or if no instance is terminated, just response an empty "requests" list:
+
+If there are no terminated instances, the output returns an empty "requests" list:
 ```
 { "status": "complete", "message": "", "requests": [ ] }
 ```
 
 # ENV variables
-Below environment variables can be used in provider plugin. The ebrokerd daemon sets value before invoke the above scripts.
+You can use the following environment variables in provider plug-ins. The ebrokerd daemon sets the variable values before invoking the previously-mentioned scripts.
 ```
-PRO_LSF_TOP    : Top directory where lsf is installed. Same as LSF_TOP in lsf.conf.
-PRO_DATA_DIR   : The data file directory, usually, it is <LSF_TOP>/work/<cluster>/resource_connector/.
-PRO_LSF_LOGDIR : Where you put the provider log. Same as LSF_LOGDIR in lsf.conf.
-PROVIDER_NAME  : The value of "name" in hostProviders.json.
-PRO_CONF_DIR   : The value of "confPath" in hostProviders.json.
-SCRIPT_OPTIONS : The value of "scriptOpption" in hostProviders.json.
+PRO_LSF_TOP    : Top level directory where LSF is installed. This is the same value as LSF_TOP in the lsf.conf file.
+PRO_DATA_DIR   : The data file directory. In most cases, this is <LSF_TOP>/work/<cluster>/resource_connector/.
+PRO_LSF_LOGDIR : The location of the provider log. This is the same value as LSF_LOGDIR in the lsf.conf file.
+PROVIDER_NAME  : The value of "name" in the hostProviders.json file.
+PRO_CONF_DIR   : The value of "confPath" in the hostProviders.json file.
+SCRIPT_OPTIONS : The value of "scriptOpption" in the hostProviders.json file.
 ```
 
 # build
-Use build.sh to build and package all plugins. As for each plugin, it depend on the plugin source code launguage.
-
-
+Use build.sh to build and package all plug-ins. For each plug-in, this depends on the plug-in source code language.
