@@ -28,26 +28,6 @@ Fixes #
 
 **ROOT CAUSE OF THE PROBLEM:**
 
-
-
-
-**PROPOSED FIX(SOLUTION, EFFORT & RISK):**
-
-
-**PLATFORMS AFFECTED:** [ all or name ]
-
-**COMPATIBILITY: [    ]**
-
-**COMPONENTS AFFECTED: [    ]**
-
-**DEPENDENCIES: [    ]**
-
-**PERFORMANCE AFFECTED: [    ]**
-
-**RETESTED**: [ y/n ] -- if you have done unit testing
-
-**SMOKE_TESTED**: [ y/n ] -- if you have passed Smoke test
-
 **UNIT TEST CASES:**
 
 **TEST SUGGESTIONS TO QA:**
