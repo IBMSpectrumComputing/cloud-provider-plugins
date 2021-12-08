@@ -109,7 +109,7 @@ The following are valid values for a request **status**:
 The following are valid values for an instance **result**:
 1. succeed: For create instance request, it means the instance is created  successfully. For terminate instance request, it means the instance is terminated successfully.
 2. executing:  The instance is still in provision or in shutting-down status.
-3. fail: The instance is failed to create or termiante.
+3. fail: The instance failed to create or terminate. 
 
 ## getReturnRequests.sh
 Check whether any of the instances in the input JSON file are terminated.
