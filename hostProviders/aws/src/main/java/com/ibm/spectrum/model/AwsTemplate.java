@@ -193,6 +193,9 @@ public class AwsTemplate {
     @JsonInclude(Include.NON_NULL)
     private String launchTemplateVersion;
 
+    @JsonInclude(Include.NON_NULL)
+    private Double marketSpotPrice;
+
     /**
      * <p>Title: </p>
      * <p>Description: </p>
@@ -225,6 +228,7 @@ public class AwsTemplate {
         this.interfaceType = t.getInterfaceType();
         this.launchTemplateId = t.getLaunchTemplateId();
         this.launchTemplateVersion = t.getLaunchTemplateVersion();
+        this.marketSpotPrice = t.getMarketSpotPrice();
     }
 
     public void hide() {
@@ -586,6 +590,8 @@ public class AwsTemplate {
         builder.append(this.launchTemplateId);
         builder.append(", launchTemplateVersion=");
         builder.append(this.launchTemplateVersion);
+        builder.append(", marketSpotPrice=");
+        builder.append(this.marketSpotPrice);
         builder.append("]");
         return builder.toString();
     }
@@ -646,6 +652,12 @@ public class AwsTemplate {
         this.requestValidityEndTime = requestValidityEndTime;
     }
 
+    public Double getMarketSpotPrice() {
+        return marketSpotPrice;
+    }
 
+    public void setMarketSpotPrice(Double marketSpotPrice) {
+        this.marketSpotPrice = marketSpotPrice;
+    }
 
 }
