@@ -110,6 +110,9 @@ public class AwsImpl implements IAws {
         log.debug("The templates: " + rsp);
 
         for (AwsTemplate t : rsp.getTemplates()) {
+            if (t.getSpotPrice() != null && t.getSpotPrice() > 0f) {
+                t.setMarketSpotPrice(AWSClient.doCurrentSpotPrice(t));
+            }
             if (!StringUtils.isNullOrEmpty(t.getUserData())) {
                 try {
                     userDataStr = t.getUserData().replaceAll(";", "\n");

@@ -30,6 +30,7 @@ import java.util.Map;
 import java.util.TimeZone;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.Date;
 
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
@@ -118,8 +119,13 @@ import com.ibm.spectrum.model.AwsTemplate;
 import com.ibm.spectrum.model.HostAllocationType;
 import com.ibm.spectrum.util.AwsUtil;
 import com.ibm.spectrum.model.AwsEntity;
-
-
+import com.amazonaws.services.ec2.model.DescribeSpotPriceHistoryRequest;
+import com.amazonaws.services.ec2.model.DescribeSpotPriceHistoryResult;
+import com.amazonaws.services.ec2.model.SpotPrice;
+import com.amazonaws.services.ec2.model.AllocationStrategy;
+import com.amazonaws.services.ec2.model.DescribeSubnetsRequest;
+import com.amazonaws.services.ec2.model.DescribeSubnetsResult;
+import com.amazonaws.services.ec2.model.Subnet;
 /**
  * @ClassName: AWSClient
  * @Description: The Client class for the AWS API
@@ -1837,4 +1843,63 @@ public class AWSClient {
         return false;
     }
 
+    public static Double doCurrentSpotPrice(AwsTemplate t) {
+        if (log.isTraceEnabled()) {
+            log.trace("Start in class AWSClient in method getCurrentSpotPrice with parameters: ");
+        }
+        if (StringUtils.isNullOrEmpty(t.getVmType()) ||
+            StringUtils.isNullOrEmpty(t.getSubnetId())) {
+                return 0.0;
+        }
+        if (!t.getAllocationStrategy().equalsIgnoreCase(AllocationStrategy.LowestPrice.toString())) {
+            log.debug("market spot price is only supported for lowestPrice allocation strategy");
+            return 0.0;
+        }
+        String[] instanceTypesArray = t.getVmType().split(",");
+        if (instanceTypesArray.length > 1) {
+            log.debug("market spot price is not supported for multiple vm types");
+            return 0.0;
+        }
+        try {
+            DescribeSpotPriceHistoryRequest request = new DescribeSpotPriceHistoryRequest();
+            String[] subnetArray = t.getSubnetId().split(",");
+            Collection<String> subnetList = new ArrayList<String>();
+            for (String s : subnetArray) {
+                 subnetList.add(s);
+            }    
+            DescribeSubnetsRequest subnetRequest = new DescribeSubnetsRequest();
+            subnetRequest.setSubnetIds(subnetList);
+            DescribeSubnetsResult subnetResult = ec2.describeSubnets(subnetRequest); 
+            List<Subnet> subnets = subnetResult.getSubnets();
+            Double minPrice = Double.MAX_VALUE;
+            for (Subnet subnet : subnets) {
+             
+                 Collection<String> instanceType = new ArrayList<String>();
+                 instanceType.add(instanceTypesArray[0].trim());
+                 request.setInstanceTypes(instanceType);
+                 Collection<String> productDescriptions = new ArrayList<String>(); 
+                 productDescriptions.add("Linux/UNIX");
+                 request.setProductDescriptions(productDescriptions);
+                 request.setStartTime(new Date());
+                 request.setAvailabilityZone(subnet.getAvailabilityZone());
+                 DescribeSpotPriceHistoryResult result = ec2.describeSpotPriceHistory(request);
+                 if (!result.getSpotPriceHistory().isEmpty()) {
+                     Double currentPrice = Double.parseDouble(result.getSpotPriceHistory().get(0).getSpotPrice());
+                     if (currentPrice < minPrice) {
+                         minPrice = currentPrice;
+                     }
+                 }
+            }
+            if (minPrice != Double.MAX_VALUE) {
+                log.debug("minimum price for template " + t.getTemplateId() + " vm type " + t.getVmType() + " in zone is " + minPrice);
+                return minPrice;
+            } else {
+                log.error("Could not retrieve current spot price");
+                return 0.0;
+            }
+        } catch (AmazonServiceException e) {
+            log.error("Exception in doCurrentSpotPrice " + e.getMessage());
+            return 0.0;
+        }
+    }
 }
