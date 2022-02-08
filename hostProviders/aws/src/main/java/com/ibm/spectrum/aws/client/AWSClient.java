@@ -351,9 +351,14 @@ public class AWSClient {
                 nic.withSubnetId(t.getSubnetId());
                 nic.withGroups(t.getSgIds());
                 nic.withInterfaceType(t.getInterfaceType().trim());
-                req.withInstanceType(t.getVmType()).withNetworkInterfaces(nic).withUserData(encodedUserData);
+                req.withInstanceType(t.getVmType()).withNetworkInterfaces(nic);
             } else {
-                req.withInstanceType(t.getVmType()).withSubnetId(t.getSubnetId()).withSecurityGroupIds(t.getSgIds()).withUserData(encodedUserData);
+                req.withInstanceType(t.getVmType()).withSubnetId(t.getSubnetId()).withSecurityGroupIds(t.getSgIds());
+            }
+            
+            // lsf-L3-tracker/issues/378 - If no LSF user_data, should not override user_data in launch template
+            if (!StringUtils.isNullOrEmpty(encodedUserData)) {
+            	req.withUserData(encodedUserData);
             }
 
             // Initialize a default key pair name
@@ -1309,9 +1314,14 @@ public class AWSClient {
         } else {
             createLaunchTemplateVersionRequest.withSourceVersion("$Default");
         }
-        RequestLaunchTemplateData requestLaunchTemplateData = new RequestLaunchTemplateData();
-        requestLaunchTemplateData.withUserData(AwsUtil.getEncodedUserData(t, tagValue));
-        createLaunchTemplateVersionRequest.withLaunchTemplateData(requestLaunchTemplateData);
+        
+        // lsf-L3-tracker/issues/378 - If no LSF user_data, should not override user_data in launch template
+        String userData = AwsUtil.getEncodedUserData(t, tagValue);
+        if (!StringUtils.isNullOrEmpty(userData)) {
+        	RequestLaunchTemplateData requestLaunchTemplateData = new RequestLaunchTemplateData();
+        	requestLaunchTemplateData.withUserData(userData);
+        	createLaunchTemplateVersionRequest.withLaunchTemplateData(requestLaunchTemplateData);
+        }
         try {
             CreateLaunchTemplateVersionResult createLaunchTemplateVersionResult = ec2.createLaunchTemplateVersion(createLaunchTemplateVersionRequest);
             fleetLaunchTemplateSpecification.withVersion(createLaunchTemplateVersionResult.getLaunchTemplateVersion().getVersionNumber().toString());
