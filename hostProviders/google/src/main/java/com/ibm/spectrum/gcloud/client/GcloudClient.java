@@ -487,13 +487,19 @@ public class GcloudClient {
     public static Metadata getMetadata(GcloudTemplate t, String projectId, String tagValue, String bulkInsertId) {
         // Optional - Add a startup script to be used by the VM
         // Instance.
-        Metadata meta = new Metadata();
-        Metadata.Items item = new Metadata.Items();
-        item.setKey("startup-script");
-        item.setValue(GcloudUtil.getUserDataScriptContent(t, tagValue, bulkInsertId));
-        meta.setItems(Collections.singletonList(item));
+    	
+    	String userData = GcloudUtil.getUserDataScriptContent(t, tagValue, bulkInsertId);
 
-        return meta;
+    	if (StringUtils.isNotBlank(userData)) {
+    		Metadata meta = new Metadata();
+    		Metadata.Items item = new Metadata.Items();
+    		item.setKey("startup-script");
+    		item.setValue(userData);
+    		meta.setItems(Collections.singletonList(item));
+    		return meta;
+    	} else {
+    		return null;
+    	}
     }
 
     /**
