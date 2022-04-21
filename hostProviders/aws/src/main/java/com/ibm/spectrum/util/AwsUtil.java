@@ -41,6 +41,10 @@ import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
 import com.amazonaws.services.ec2.model.AllocationStrategy;
+import com.amazonaws.services.ec2.model.CreateFleetRequest;
+import com.amazonaws.services.ec2.model.FleetLaunchTemplateConfigRequest;
+import com.amazonaws.services.ec2.model.FleetLaunchTemplateOverridesRequest;
+import com.amazonaws.services.ec2.model.FleetType;
 import com.amazonaws.services.ec2.model.GroupIdentifier;
 import com.amazonaws.services.ec2.model.IamInstanceProfileSpecification;
 import com.amazonaws.services.ec2.model.Instance;
@@ -49,6 +53,7 @@ import com.amazonaws.services.ec2.model.SpotFleetLaunchSpecification;
 import com.amazonaws.services.ec2.model.SpotPlacement;
 import com.amazonaws.services.ec2.model.SpotFleetTagSpecification;
 import com.amazonaws.services.ec2.model.Tag;
+import com.amazonaws.services.ec2.model.TargetCapacitySpecificationRequest;
 import com.amazonaws.services.ec2.model.ResourceType;
 import com.amazonaws.services.ec2.model.InstanceNetworkInterfaceSpecification;
 import com.amazonaws.services.ec2.model.InstanceNetworkInterface;
@@ -57,6 +62,7 @@ import com.amazonaws.services.ec2.model.LaunchTemplateTagSpecificationRequest;
 import com.amazonaws.util.CollectionUtils;
 import com.amazonaws.util.StringUtils;
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.MapperFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.ibm.spectrum.constant.AwsConst;
 import com.ibm.spectrum.model.AwsConfig;
@@ -64,6 +70,7 @@ import com.ibm.spectrum.model.AwsEntity;
 import com.ibm.spectrum.model.AwsMachine;
 import com.ibm.spectrum.model.AwsRequest;
 import com.ibm.spectrum.model.AwsTemplate;
+import com.ibm.spectrum.model.HostAllocationType;
 
 /**
 * @ClassName: AwsUtil
@@ -346,6 +353,22 @@ public class AwsUtil {
         } catch(IOException e) {
             log.error("Change json file to object error.", e);
         }
+        
+
+        return null;
+    }
+    
+
+    public static <T> T toObjectCaseInsensitive(File jsonFile, Class<T> type) {
+        ObjectMapper mapper = new ObjectMapper();
+        mapper.configure(MapperFeature.ACCEPT_CASE_INSENSITIVE_PROPERTIES, true);
+
+        try {
+            return (T) mapper.readValue(jsonFile, type);
+        } catch(IOException e) {
+            log.error("Change json file to object error.", e);
+        }
+        
 
         return null;
     }
@@ -847,7 +870,7 @@ public class AwsUtil {
         // SUP_BY_LSF issue#259 support CapacityOptimized
         // and change the default allocation strategy to CapacityOptimized if empty or invalid
         if (StringUtils.isNullOrEmpty(awsTemplate.getAllocationStrategy())) {
-            awsTemplate.setAllocationStrategy(AllocationStrategy.CapacityOptimized.toString());
+        	awsTemplate.setAllocationStrategy(AllocationStrategy.CapacityOptimized.toString());
         } else if (awsTemplate.getAllocationStrategy().equalsIgnoreCase(
                        AllocationStrategy.CapacityOptimized.toString())) {
             awsTemplate.setAllocationStrategy(AllocationStrategy.CapacityOptimized.toString());
@@ -945,6 +968,84 @@ public class AwsUtil {
 
         return true;
     }
+    
+    
+    /**
+     * Validate all required parameters are provided
+     *
+     * @param awsTemplate
+     * @return
+     */
+    public static boolean validateEC2FleetRequest(AwsTemplate awsTemplate, AwsEntity rsp) {
+    	String configFilePath = null;
+    	if (!StringUtils.isNullOrEmpty(awsTemplate.getEc2FleetConfig())) {
+    		if (awsTemplate.getEc2FleetConfig().startsWith("/")) {
+    			configFilePath = awsTemplate.getEc2FleetConfig();	
+    		} else {
+    			configFilePath = AwsUtil.getConfDir() + File.separator + "conf"
+    	        		+ File.separator + awsTemplate.getEc2FleetConfig();
+    		}
+
+    		File fleetConfigFile = new File(configFilePath);
+    		if(!fleetConfigFile.exists()) {
+    			rsp.setMsg("The specified fleet configuration file <" + configFilePath + "> does not exist");
+    			return false;
+    		}
+    		
+    		if (awsTemplate.getOnDemandTargetCapacityRatio() != null
+    				&& (awsTemplate.getOnDemandTargetCapacityRatio() < 0.0
+    						|| awsTemplate.getOnDemandTargetCapacityRatio() > 1.0)) {
+    			rsp.setMsg("The specified OnDemandTargetCapacityRatio is invalid, please specify a value between 0.0 and 1.0");
+    			return false;
+    		}
+    		
+    		CreateFleetRequest request = AwsUtil.toObjectCaseInsensitive(fleetConfigFile, CreateFleetRequest.class);
+    		
+    		if (request == null) {
+    			rsp.setMsg("Error parsing fleet configuration file <" + configFilePath + ">");
+    			return false;
+    		}
+    		
+    		
+    		//Maintain type not supported
+    		if (StringUtils.isNullOrEmpty(request.getType()) 
+    				|| FleetType.Maintain.toString().equalsIgnoreCase(request.getType())) {
+    			rsp.setMsg("Type not defined or defined to unsupported type 'Maintain', only 'Instant' or 'Request' type is supported");
+    			return false;
+    		}
+    		
+    		//TargetCapacityUnitType not supported
+    		TargetCapacitySpecificationRequest targetCapacitySpecification = request.getTargetCapacitySpecification();
+    		if (targetCapacitySpecification != null
+    				&& targetCapacitySpecification.getTargetCapacityUnitType() != null) {
+    			rsp.setMsg("TargetCapacityUnitType is not supported");
+    			return false;
+    		}
+    		
+    		//InstanceRequirements not supported
+    		List<FleetLaunchTemplateConfigRequest> fleetLaunchTemplateConfigList = request.getLaunchTemplateConfigs();
+    		if (!CollectionUtils.isNullOrEmpty(fleetLaunchTemplateConfigList)) {
+    			for (FleetLaunchTemplateConfigRequest config : fleetLaunchTemplateConfigList) {
+    				List<FleetLaunchTemplateOverridesRequest> fleetLaunchTemplateOverridesList  = config.getOverrides();
+    				if (!CollectionUtils.isNullOrEmpty(fleetLaunchTemplateOverridesList)){
+    					for (FleetLaunchTemplateOverridesRequest override : fleetLaunchTemplateOverridesList) {
+    						if (override.getInstanceRequirements() != null) {
+    							rsp.setMsg("InstanceRequirements is not supported");
+    							return false;
+    						}
+    					}
+    				}
+    			}
+    		}
+    		
+    		awsTemplate.setEc2FleetConfig(configFilePath);
+       		awsTemplate.setFleetType(request.getType());
+    	}
+
+        return true;
+    }
+    
+    
 
 
     /**
@@ -1012,7 +1113,6 @@ public class AwsUtil {
                     spotFleetLaunchSpecification.setTagSpecifications(tagSpecifications);
                 }
             }
-
 
             spotFleetLaunchSpecificationList.add(spotFleetLaunchSpecification);
 
@@ -1159,10 +1259,6 @@ public class AwsUtil {
         return encodedUserData;
     }
 
-
-
-
-
     /**
      * Maps an Instance retrieved from the AWS API to an AwsMachine
      *
@@ -1213,10 +1309,13 @@ public class AwsUtil {
         awsMachine.setPublicIpAddress(instance.getPublicIpAddress());
         // If this is a spot instance, set the machine's request ID with the
         // spot instance request ID not the spot fleet request ID
+        
         if(InstanceLifecycleType.Spot.toString().equals(instance.getInstanceLifecycle())) {
-            awsMachine.setReqId(instance.getSpotInstanceRequestId());
+        	awsMachine.setLifeCycleType(HostAllocationType.Spot);
+        	awsMachine.setReqId(instance.getSpotInstanceRequestId());
         } else {
-            awsMachine.setReqId(reqId);
+        	awsMachine.setReqId(reqId);
+        	awsMachine.setLifeCycleType(HostAllocationType.OnDemand);
         }
         awsMachine.setTemplate(templateId);
         awsMachine.setName(instance.getPrivateDnsName());
@@ -1231,7 +1330,15 @@ public class AwsUtil {
         else
             mlaunchtime = 0L;
         awsMachine.setLaunchtime(mlaunchtime);
-
+        
+        //Set ncores and nthreads of this machine
+        Integer ncores = instance.getCpuOptions().getCoreCount();
+        Integer nthreads = ncores * instance.getCpuOptions().getThreadsPerCore();
+        awsMachine.setNcores(ncores);
+        awsMachine.setNthreads(nthreads);
+        
+        log.debug("Instance type: " + instance.getInstanceType() + ", ncores: " + ncores + ", nthreads: " + nthreads + ", templateId: " + templateId);
+        
         if (log.isTraceEnabled()) {
             log.trace("End in class AwsUtil in method mapAwsInstanceToAwsMachine with return awsMachine:" + awsMachine);
         }
