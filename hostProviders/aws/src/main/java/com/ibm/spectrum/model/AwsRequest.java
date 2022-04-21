@@ -111,6 +111,14 @@ public class AwsRequest {
     @JsonProperty("hostAllocationType")
     @JsonInclude(Include.NON_NULL)
     private String hostAllocationType;
+    
+    /**
+     * Type of EC2 fleet request: instant, request
+     */
+    @JsonProperty("fleetType")
+    @JsonInclude(Include.NON_NULL)
+    private String fleetType;
+    
 
     /**
     * <p>Title: </p>
@@ -313,6 +321,8 @@ public class AwsRequest {
         builder.append(tagValue);
         builder.append(", allocationtype=");
         builder.append(hostAllocationType);
+        builder.append(", fleetType=");
+        builder.append(fleetType);
         builder.append("]");
         return builder.toString();
     }
@@ -332,5 +342,13 @@ public class AwsRequest {
     public void setTemplateId(String templateId) {
         this.templateId = templateId;
     }
+
+	public String getFleetType() {
+		return fleetType;
+	}
+
+	public void setFleetType(String fleetType) {
+		this.fleetType = fleetType;
+	}
 
 }
