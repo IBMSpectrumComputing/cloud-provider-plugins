@@ -359,12 +359,12 @@ public class AwsUtil {
     }
     
 
-    public static <T> T toObjectCaseInsensitive(File jsonFile, Class<T> type) {
+    public static <T> T toObjectCaseInsensitive(String content, Class<T> type) {
         ObjectMapper mapper = new ObjectMapper();
         mapper.configure(MapperFeature.ACCEPT_CASE_INSENSITIVE_PROPERTIES, true);
 
         try {
-            return (T) mapper.readValue(jsonFile, type);
+            return (T) mapper.readValue(content, type);
         } catch(IOException e) {
             log.error("Change json file to object error.", e);
         }
@@ -969,6 +969,31 @@ public class AwsUtil {
         return true;
     }
     
+    /**
+     * 
+     * @Title: replaceTargetCapacitySpecification
+     * @Description: replace fixed pattern in targetCapacitySpecification accordingly
+     * @param awsTemplate
+     * @return
+     */
+    public static String replaceTargetCapacitySpecification(AwsTemplate awsTemplate) {
+    	String configPath = awsTemplate.getEc2FleetConfig();
+    	String newContent = "";
+    	if (!StringUtils.isNullOrEmpty(configPath)) {
+    		String content = readFileToString(configPath);
+    		Integer onDemandTargetCapacity = 0;
+    		Integer spotDemandTargetCapacity = 0;
+    		if (awsTemplate.getOnDemandTargetCapacityRatio() != null) {
+    			onDemandTargetCapacity = (int) Math.ceil(awsTemplate.getVmNumber() * awsTemplate.getOnDemandTargetCapacityRatio());
+    			spotDemandTargetCapacity = awsTemplate.getVmNumber() - onDemandTargetCapacity;
+    		}
+    		
+    		newContent = content.replaceAll("\\$LSF_TOTAL_TARGET_CAPACITY", awsTemplate.getVmNumber().toString())
+    				            .replaceAll("\\$LSF_ONDEMAND_TARGET_CAPACITY", onDemandTargetCapacity.toString())
+    				            .replaceAll("\\$LSF_SPOT_TARGET_CAPACITY", spotDemandTargetCapacity.toString());
+    	}
+    	return newContent;
+    }
     
     /**
      * Validate all required parameters are provided
@@ -999,13 +1024,14 @@ public class AwsUtil {
     			return false;
     		}
     		
-    		CreateFleetRequest request = AwsUtil.toObjectCaseInsensitive(fleetConfigFile, CreateFleetRequest.class);
+    		awsTemplate.setEc2FleetConfig(configFilePath);
     		
+    		String fileContent = replaceTargetCapacitySpecification(awsTemplate);
+    		CreateFleetRequest request = AwsUtil.toObjectCaseInsensitive(fileContent, CreateFleetRequest.class);
     		if (request == null) {
     			rsp.setMsg("Error parsing fleet configuration file <" + configFilePath + ">");
     			return false;
     		}
-    		
     		
     		//Maintain type not supported
     		if (StringUtils.isNullOrEmpty(request.getType()) 
@@ -1038,7 +1064,6 @@ public class AwsUtil {
     			}
     		}
     		
-    		awsTemplate.setEc2FleetConfig(configFilePath);
        		awsTemplate.setFleetType(request.getType());
     	}
 
