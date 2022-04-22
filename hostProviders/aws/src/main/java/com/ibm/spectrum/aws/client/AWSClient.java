@@ -398,6 +398,52 @@ public class AWSClient {
     
     /**
      * 
+     * @Title: updateTargetCapacitySpecification
+     * @Description: Update targetCapacitySpecification accordingly
+     * @param t
+     * @param fleetRequest
+     * @return
+     */
+    public static void updateTargetCapacitySpecification( AwsTemplate t, CreateFleetRequest fleetRequest) {
+		if (log.isTraceEnabled()) {
+			log.trace("Start in class AWSClient in method updateTargetCapacitySpecification with parameters: fleetRequest: " + fleetRequest);
+		}
+    	TargetCapacitySpecificationRequest targetCapacitySpec = fleetRequest.getTargetCapacitySpecification();
+    	if (targetCapacitySpec == null) {
+    		targetCapacitySpec = new TargetCapacitySpecificationRequest();
+    	}
+    	targetCapacitySpec.setTotalTargetCapacity(t.getVmNumber());
+    	
+    	if (t.getOnDemandTargetCapacityRatio() != null) {  	
+    		Integer onDemandTargetCapacity = (int) Math.ceil(t.getVmNumber() * t.getOnDemandTargetCapacityRatio());
+    		Integer spotTargetCapacity = t.getVmNumber() - onDemandTargetCapacity;
+    		targetCapacitySpec.withOnDemandTargetCapacity(onDemandTargetCapacity)
+    						  .withSpotTargetCapacity(spotTargetCapacity);
+    	}
+    	
+    	//Revise the onDemandTargetCapacity or spotTargetCapacity if user specify a value larger than totalTargetCapacity
+    	if (targetCapacitySpec.getOnDemandTargetCapacity() > targetCapacitySpec.getTotalTargetCapacity()) {
+    		log.warn("The specified onDemandTargetCapacity <%d> is larger than totalTargetCapacity <%d>, reset it to <%d>", 
+    				targetCapacitySpec.getOnDemandTargetCapacity(), targetCapacitySpec.getTotalTargetCapacity(), targetCapacitySpec.getTotalTargetCapacity());
+    		targetCapacitySpec.setOnDemandTargetCapacity(targetCapacitySpec.getTotalTargetCapacity());
+    	}
+    	
+    	if (targetCapacitySpec.getSpotTargetCapacity() > targetCapacitySpec.getTotalTargetCapacity()) {
+    		log.warn("The specified spotTargetCapacity <%d> is larger than totalTargetCapacity <%d>, reset it to <%d>", 
+    				targetCapacitySpec.getSpotTargetCapacity(), targetCapacitySpec.getTotalTargetCapacity(), targetCapacitySpec.getTotalTargetCapacity());
+    		targetCapacitySpec.setSpotTargetCapacity(targetCapacitySpec.getTotalTargetCapacity());
+    	}
+    	
+    	fleetRequest.setTargetCapacitySpecification(targetCapacitySpec);
+    	
+        if (log.isTraceEnabled()) {
+            log.trace("End in class AWSClient in method updateTargetCapacitySpecification with return: fleetRequest: " + fleetRequest);
+        }
+    }
+    
+    
+    /**
+     * 
      * @Title: createVMByEC2Fleet
      * @Description: create VM by calling EC2 Fleet API
      * @param t
@@ -416,7 +462,14 @@ public class AWSClient {
         	
         	CreateFleetRequest fleetRequest = new CreateFleetRequest();
         	//Generate request according to EC2 Fleet configuration file
-        	fleetRequest = AwsUtil.toObjectCaseInsensitive(new File(t.getEc2FleetConfig()), CreateFleetRequest.class);
+        	
+        	//Replace fixed pattern in target capacity specification
+        	String fileContent = AwsUtil.replaceTargetCapacitySpecification(t);
+        	fleetRequest = AwsUtil.toObjectCaseInsensitive(fileContent, CreateFleetRequest.class);
+        	
+        	//Update target capacity if fixed pattern not specified
+        	updateTargetCapacitySpecification(t, fleetRequest);
+        	
         	//Update launchTemplate with LSF provided user_data if exists
         	templateConfigRequestList = updateFleetLaunchTemplateConfig(t, tagValue, fleetRequest);
         	if (fleetRequest == null
@@ -429,21 +482,6 @@ public class AWSClient {
                 }
         		return null;
         	}
-        	
-        	//Update target capacity
-        	TargetCapacitySpecificationRequest targetCapacitySpec = fleetRequest.getTargetCapacitySpecification();
-        	if (targetCapacitySpec == null) {
-        		targetCapacitySpec = new TargetCapacitySpecificationRequest();
-        	}
-        	targetCapacitySpec.setTotalTargetCapacity(t.getVmNumber());
-        	
-        	if (t.getOnDemandTargetCapacityRatio() != null) {  	
-        		Integer onDemandTargetCapacity = (int) Math.ceil(t.getVmNumber() * t.getOnDemandTargetCapacityRatio());
-        		Integer spotTargetCapacity = t.getVmNumber() - onDemandTargetCapacity;
-        		targetCapacitySpec.withOnDemandTargetCapacity(onDemandTargetCapacity)
-        						  .withSpotTargetCapacity(spotTargetCapacity);
-        	}
-        	fleetRequest.setTargetCapacitySpecification(targetCapacitySpec);
         	
         	//Set expire time for request type fleet request. By default is 30 min.
         	if (FleetType.Request.toString().equalsIgnoreCase(fleetRequest.getType())) {
