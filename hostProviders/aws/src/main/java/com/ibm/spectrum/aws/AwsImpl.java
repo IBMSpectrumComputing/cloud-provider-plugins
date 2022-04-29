@@ -297,7 +297,7 @@ public class AwsImpl implements IAws {
                 if (CollectionUtils.isNullOrEmpty(mList)) {
                 	if (!StringUtils.isNullOrEmpty(requestInDB.getFleetType())) {
                 		if (FleetType.Request.toString().equalsIgnoreCase(requestInDB.getFleetType())) {
-                			List<AwsMachine> newlyCreatedMachines = AWSClient.updateEC2FleetStatus(requestInDB);
+                			List<AwsMachine> newlyCreatedMachines = AWSClient.updateEC2FleetStatus(requestInDB, null);
                 			if ((requestInDB.getStatus().equals(AwsConst.EBROKERD_STATE_COMPLETE)
                 					|| requestInDB.getStatus().equals(AwsConst.EBROKERD_STATE_COMPLETE_WITH_ERROR))
                 					&& CollectionUtils.isNullOrEmpty(newlyCreatedMachines)) {
@@ -749,7 +749,9 @@ public class AwsImpl implements IAws {
         }
 
         rsp.setStatus(AwsConst.EBROKERD_STATE_COMPLETE);
-        rsp.setRsp(0, "");
+        if (rsp.getMsg() == null) {
+        	rsp.setRsp(0, "");
+        }
         rsp.setReqs(reqLst);
         if (log.isTraceEnabled()) {
             log.trace("End in class AwsImpl in method getRequestStatus with return: AwsEntity: "
@@ -791,7 +793,7 @@ public class AwsImpl implements IAws {
         if (statusUpdateForCreateMachine) {
         	if (!StringUtils.isNullOrEmpty(fReq.getFleetType())) {
         		if (FleetType.Request.toString().equalsIgnoreCase(fReq.getFleetType())) {
-            		newlyCreatedMachines = AWSClient.updateEC2FleetStatus(fReq);
+            		newlyCreatedMachines = AWSClient.updateEC2FleetStatus(fReq, rsp);
             		latestRequestStatus = fReq.getStatus();
             		log.debug("Setting the EC2 Fleet request status: " + latestRequestStatus);
             		log.debug("newlyCreatedMachines: " + newlyCreatedMachines);
