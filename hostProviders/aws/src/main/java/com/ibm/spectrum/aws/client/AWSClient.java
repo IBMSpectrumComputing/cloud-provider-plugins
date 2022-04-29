@@ -458,6 +458,7 @@ public class AWSClient {
         List<FleetLaunchTemplateConfigRequest> templateConfigRequestList = null;
         
         try {
+        	//Get request expire time period by parsing requestValidity 
         	AwsUtil.applyDefaultValuesForSpotInstanceTemplate(t);
         	
         	CreateFleetRequest fleetRequest = new CreateFleetRequest();
@@ -1676,7 +1677,7 @@ public class AWSClient {
      * @param awsRequest
      * @return The list of machines newly created since the last request
      */
-    public static List<AwsMachine> updateEC2FleetStatus(AwsRequest awsRequest) {
+    public static List<AwsMachine> updateEC2FleetStatus(AwsRequest awsRequest, AwsEntity rsp) {
 
         if (log.isDebugEnabled()) {
             log.debug("Start in class AWSClient in method updateEC2FleetStatus with parameters: awsRequest: "
@@ -1712,6 +1713,10 @@ public class AWSClient {
         log.debug("[EC2 Fleet request - " + fleetRequestId + "] State: " + fleetState);
         log.debug("[EC2 Fleet request - " + fleetRequestId + "] Activity Status: " + fleetActivityStatus);
         
+        if (log.isTraceEnabled()) {
+        	log.trace("[EC2 Fleet request - " + fleetRequestId + "] Detailed info: " + fleetData.toString());
+        }
+        
         if (FleetStateCode.Submitted.toString().equals(fleetState)
         		|| FleetStateCode.Modifying.toString().equals(fleetState)) {
         	ebrokerdRequestStatus = AwsConst.EBROKERD_STATE_RUNNING;
@@ -1725,13 +1730,20 @@ public class AWSClient {
         	} else if (FleetActivityStatus.Fulfilled.toString().equals(fleetActivityStatus)) {
         		ebrokerdRequestStatus = AwsConst.EBROKERD_STATE_COMPLETE;
         	}
-        } else if (FleetStateCode.Deleted.toString().equals(fleetState)
-        		|| FleetStateCode.Deleted_running.toString().equals(fleetState)
+        } else if (FleetStateCode.Deleted_running.toString().equals(fleetState)
         		|| FleetStateCode.Deleted_terminating.toString().equals(fleetState)) {
+        	//The request has expires, mark the aws lack of capacity
+        	ebrokerdRequestStatus = AwsConst.EBROKERD_STATE_COMPLETE;
+        	if (rsp != null) {
+        		rsp.setRsp(0, "Error Code: InsufficientCapacity");
+        		log.warn("Not fulfilled target capacity for EC2 Fleet Request <" + fleetRequestId + "> within specified time period, return InsufficientCapacity to disable the template for a while");
+        	}
+        } else if (FleetStateCode.Deleted.toString().equals(fleetState)) {
         	ebrokerdRequestStatus = AwsConst.EBROKERD_STATE_COMPLETE;
         } else if (FleetStateCode.Failed.toString().equals(fleetState)) {
         	ebrokerdRequestStatus = AwsConst.EBROKERD_STATE_COMPLETE_WITH_ERROR;
         }
+        
         
         // Setting the status of the request
         awsRequest.setStatus(ebrokerdRequestStatus);
