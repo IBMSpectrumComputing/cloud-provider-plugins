@@ -987,5 +987,43 @@ public class GcloudUtil {
             return false;
         }
     }
+    
+    /**
+     * @Title: getHttpRequestConnectTimeout
+     * @Description: get the google httpRequest connect timeout in seconds
+     * @param null
+     * @return httpRequest connect timeout
+     */
+    public static int getHttpRequestConnectTimeout() {
+		int connectTimeout = GcloudConst.DEFAULT_HTTP_CONNECT_TIMEOUT;
+
+    	Integer configConnectTimeout = GcloudUtil.getConfig().getHttpConnectTimeout();
+		if (configConnectTimeout != null && configConnectTimeout.intValue() > 0 && configConnectTimeout.intValue() < 60) {
+			connectTimeout = configConnectTimeout.intValue();
+		} else if (configConnectTimeout != null) {
+			log.warn("HTTP_CONNECT_TIMEOUT must be greater than 0 and smaller than 60. Set default to " + connectTimeout);
+		}
+		
+		return connectTimeout;
+    }
+    
+    /**
+     * @Title: getHttpRequestReadTimeout
+     * @Description: get the google httpRequest read timeout in seconds
+     * @param null
+     * @return httpRequest read timeout
+     */
+    public static int getHttpRequestReadTimeout() {
+		int readTimeout = GcloudConst.DEFAULT_HTTP_READ_TIMEOUT;
+		
+		Integer configReadTimeout = GcloudUtil.getConfig().getHttpReadTimeout();
+		if (configReadTimeout != null && configReadTimeout.intValue() > 0 && configReadTimeout.intValue() < 60) {
+			readTimeout = configReadTimeout.intValue();
+		} else if (configReadTimeout != null) {
+			log.warn("HTTP_READ_TIMEOUT must be greater than 0 and smaller than 60. Set default to " + readTimeout);
+		}
+
+		return readTimeout;
+    }
 
 }
