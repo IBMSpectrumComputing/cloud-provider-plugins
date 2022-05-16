@@ -491,6 +491,14 @@ public class AWSClient {
         					.withTerminateInstancesWithExpiration(false);
         	}
 
+        	// Set user tag string
+        	String userTagString = "RC_ACCOUNT=" + tagValue + ";" + t.getInstanceTags();
+        	List<TagSpecification> tagSpecifications = createUserTagSpecification(userTagString);
+        	if (!tagSpecifications.isEmpty() && FleetType.Instant.toString().equalsIgnoreCase(fleetRequest.getType())) {
+        		fleetRequest.setTagSpecifications(tagSpecifications);
+        	}
+
+
             if (log.isTraceEnabled()) {
                 log.trace("Start to call EC2 Fleet API createFleet with request: " + fleetRequest);
             }
@@ -604,11 +612,9 @@ public class AWSClient {
 
             // Set user tag string
             String userTagString = "RC_ACCOUNT=" + tagValue + ";" + t.getInstanceTags();
-            if (!StringUtils.isNullOrEmpty(userTagString)) {
-                List<TagSpecification> tagSpecifications = createUserTagSpecification(userTagString);
-                if (!tagSpecifications.isEmpty()) {
-                    req.setTagSpecifications(tagSpecifications);
-                }
+            List<TagSpecification> tagSpecifications = createUserTagSpecification(userTagString);
+            if (!tagSpecifications.isEmpty()) {
+                req.setTagSpecifications(tagSpecifications);
             }
 
             // Use EC2 instance profile if specified by the template (RTC
@@ -1116,7 +1122,8 @@ public class AWSClient {
         } else {
             req.withMaxResults(500);
             //Use tag RC_ACCOUNT as filter when listing all VMs
-            req.withFilters(new Filter().withName("tag-key").withValues("RC_ACCOUNT"));
+            //lsf-tracker#2680 EC2 Fleet instant request instances keeps pending for some longer time.
+            //req.withFilters(new Filter().withName("tag-key").withValues("RC_ACCOUNT"));
         }
 
         AmazonEC2 ec2 = getEC2Client();
