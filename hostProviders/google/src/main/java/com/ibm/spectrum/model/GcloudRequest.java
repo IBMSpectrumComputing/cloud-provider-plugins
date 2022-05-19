@@ -332,6 +332,8 @@ public class GcloudRequest {
         builder.append(vmName);
         builder.append(", machineId=");
         builder.append(machineId);
+        builder.append(", templateId=");
+        builder.append(templateId);
         builder.append(", gracePeriod=");
         builder.append(gracePeriod);
         builder.append(", rc_account=");

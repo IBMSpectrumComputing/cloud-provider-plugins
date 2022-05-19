@@ -62,8 +62,22 @@ public class GcloudConfig {
      */
     @JsonProperty("GCLOUD_REGION")
     private String gcloudRegion;
-
+    
     /**
+     * Optional and type is int, specify the http connect timeout (in seconds)
+     */
+    @JsonProperty("HTTP_CONNECT_TIMEOUT")
+    @JsonInclude(Include.NON_NULL)
+    private Integer httpConnectTimeout;
+
+	/**
+     * Optional and type is int, specify the http read timeout (in seconds)
+     */
+    @JsonProperty("HTTP_READ_TIMEOUT")
+    @JsonInclude(Include.NON_NULL)
+    private Integer httpReadTimeout;
+ 
+	/**
     * <p>Title: </p>
     * <p>Description: </p>
     */
@@ -80,6 +94,9 @@ public class GcloudConfig {
         this.credentialFile = c.getCredentialFile();
         this.projectID = c.getProjectID();
         this.bulkInsertEnabled = c.getBulkInsertEnabled();
+        this.gcloudRegion = c.getGcloudRegion();
+        this.httpConnectTimeout = c.getHttpConnectTimeout();
+        this.httpReadTimeout = c.getHttpReadTimeout();
     }
 
     /**
@@ -156,6 +173,35 @@ public class GcloudConfig {
         this.gcloudRegion = gcloudRegion;
     }
 
+    
+    /**
+    * @return httpConnectTimeout
+    */
+    public Integer getHttpConnectTimeout() {
+		return httpConnectTimeout;
+	}
+
+    /**
+     * @param httpConnectTimeout to set (in seconds)
+     */
+	public void setHttpConnectTimeout(Integer httpConnectTimeout) {
+		this.httpConnectTimeout = httpConnectTimeout;
+	}
+
+    
+    /**
+    * @return httpReadTimeout
+    */
+    public Integer getHttpReadTimeout() {
+		return httpReadTimeout;
+	}
+
+    /**
+     * @param httpReadTimeout to set (in seconds)
+     */
+	public void setHttpReadTimeout(Integer httpReadTimeout) {
+		this.httpReadTimeout = httpReadTimeout;
+	}
 
 
     /** (Non Javadoc)
@@ -173,6 +219,12 @@ public class GcloudConfig {
         builder.append(credentialFile);
         builder.append(", projectID=");
         builder.append(projectID);
+        builder.append(", gcloudRegion=");
+        builder.append(gcloudRegion);
+        builder.append(", httpConnectTimeout=");
+        builder.append(httpConnectTimeout);
+        builder.append(", httpReadTimeout=");
+        builder.append(httpReadTimeout);
         if (bulkInsertEnabled != null) {
             builder.append(", bulkInsertEnabled=");
             builder.append(bulkInsertEnabled);

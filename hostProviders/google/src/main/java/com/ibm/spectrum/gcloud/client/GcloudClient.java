@@ -55,6 +55,7 @@ import com.google.api.client.http.HttpResponseException;
 import com.google.api.client.googleapis.javanet.GoogleNetHttpTransport;
 import com.google.api.client.googleapis.json.GoogleJsonResponseException;
 import com.google.api.client.http.HttpHeaders;
+import com.google.api.client.http.HttpRequest;
 import com.google.api.client.http.HttpTransport;
 import com.google.api.client.json.JsonFactory;
 import com.google.api.client.json.jackson2.JacksonFactory;
@@ -103,6 +104,24 @@ public class GcloudClient {
      */
     private static final HttpHeaders HTTP_HEADER = getHttpHeader();
 
+	private static HttpRequestInitializer setHttpTimeout(final HttpRequestInitializer requestInitializer) {
+		final int gHttpConnectTimeout = GcloudUtil.getHttpRequestConnectTimeout() * 1000;
+		final int gHttpReadTimeout = GcloudUtil.getHttpRequestReadTimeout() * 1000;
+		
+		if (log.isTraceEnabled()) {
+			log.trace("Use HTTP_CONNECT_TIMEOUT: " + gHttpConnectTimeout + ", HTTP_READ_TIMEOUT: " + gHttpReadTimeout);
+		}
+		
+		return new HttpRequestInitializer() {
+			@Override
+			public void initialize(HttpRequest httpRequest) throws IOException {
+				requestInitializer.initialize(httpRequest);
+				httpRequest.setConnectTimeout(gHttpConnectTimeout); 
+				httpRequest.setReadTimeout(gHttpReadTimeout);
+			}
+		};
+	}
+	
     /**
      *
      * @Title: getClient @Description: Initialize Cloud Provider
@@ -146,8 +165,9 @@ public class GcloudClient {
 
             HttpRequestInitializer requestInitializer = new HttpCredentialsAdapter(credential);
 
+
             // Create Compute Engine object for listing instances.
-            compute = new Compute.Builder(httpTransport, JSON_FACTORY, requestInitializer)
+            compute = new Compute.Builder(httpTransport, JSON_FACTORY, setHttpTimeout(requestInitializer))
             .setApplicationName(GcloudConst.APPLICATION_NAME).build();
         } catch (Exception ex) {
             log.error("Failed to create credential and create compute client for cloud" + GcloudUtil.getProviderName()
@@ -1024,7 +1044,7 @@ public class GcloudClient {
 
         return bulkResource;
     }
-
+    
 
     /**
      *
@@ -1113,6 +1133,7 @@ public class GcloudClient {
                 opStatus = op.getStatus();
             } else if (HostAllocationType.RegionalBulk.toString().equals(req.getHostAllocationType())) {
                 String region = (StringUtils.isNotEmpty(at.getRegion())) ? at.getRegion() : GcloudUtil.getConfig().getGcloudRegion();
+                log.debug("Query bulk operation [" + bulkOperationId + "] on region [" + region + "].");
                 Compute.RegionOperations.Get get = compute.regionOperations().get(projectId, region, bulkOperationId);
                 Operation op = get.setRequestHeaders(HTTP_HEADER).execute();
                 opStatus = op.getStatus();
