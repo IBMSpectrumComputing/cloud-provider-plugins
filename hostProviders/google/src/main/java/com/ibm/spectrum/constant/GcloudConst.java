@@ -82,5 +82,11 @@ public class GcloudConst {
     public static final String BULK_INSERT_ID_PREFIX = "bulk-";
 
     public static final int MAXIMUM_VM_IN_ONE_REQUEST = 1000;
+    
+    // default http connect timeout 10 seconds
+    public static final int DEFAULT_HTTP_CONNECT_TIMEOUT = 10; 
+    
+    // default http read timeout 20 seconds
+    public static final int DEFAULT_HTTP_READ_TIMEOUT = 20;
 
 }
