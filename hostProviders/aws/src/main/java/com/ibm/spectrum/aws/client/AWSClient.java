@@ -495,8 +495,8 @@ public class AWSClient {
         	String userTagString = "RC_ACCOUNT=" + tagValue + ";" + t.getInstanceTags();
         	List<TagSpecification> tagSpecifications = createUserTagSpecification(userTagString);
         	if (!tagSpecifications.isEmpty() && FleetType.Instant.toString().equalsIgnoreCase(fleetRequest.getType())) {
-        		fleetRequest.setTagSpecifications(tagSpecifications);
-        	}
+			fleetRequest.setTagSpecifications(tagSpecifications);
+		}
 
 
             if (log.isTraceEnabled()) {
@@ -670,14 +670,10 @@ public class AWSClient {
         return null;
     }
 
-
-    private static List<TagSpecification> createUserTagSpecification( String userTagString) {
-
-        List<TagSpecification> tagSpecifications = new ArrayList<TagSpecification>();
-
+    private static List<Tag> createInstanceTags(String userTagString) {
+    	List<Tag> tagsList = new ArrayList<Tag>();
+    	
         if (!StringUtils.isNullOrEmpty(userTagString)) {
-            List<Tag> tagsToInstance = new ArrayList<Tag>();
-            List<Tag> tagsToVolume = new ArrayList<Tag>();
             Tag tag;
             String[] tagStr = userTagString.split(";");
             for (String inst : tagStr) {
@@ -693,13 +689,27 @@ public class AWSClient {
                                   + inst);
                     } else {
                         tag = new Tag(instSubStr[0], instSubStr[1]);
-                        tagsToInstance.add(tag);
-                        tag = new Tag(instSubStr[0], instSubStr[1]);
-                        tagsToVolume.add(tag);
+                        tagsList.add(tag);
                     }
                 }
             }
 
+        }
+        
+        return tagsList;
+    }
+
+    private static List<TagSpecification> createUserTagSpecification( String userTagString) {
+        List<TagSpecification> tagSpecifications = new ArrayList<TagSpecification>();
+
+        if (!StringUtils.isNullOrEmpty(userTagString)) {
+            List<Tag> tagList = createInstanceTags(userTagString);
+            List<Tag> tagsToInstance = new ArrayList<Tag>();
+            List<Tag> tagsToVolume = new ArrayList<Tag>();
+            for (Tag tag : tagList) {
+                tagsToInstance.add(tag);
+                tagsToVolume.add(tag);
+            }
             TagSpecification tagSpec = new TagSpecification();
             tagSpec.setResourceType(ResourceType.Instance);
             tagSpec.setTags(tagsToInstance);
@@ -725,23 +735,28 @@ public class AWSClient {
      * Additional tags can be provided in the {additionalInstanceTags} parameter
      * in the following format: {Key1=Value1;Key2=Value2}
      *
-     * @param instanceId
-     *            The ID of the instance object created
+     * @param instance
+     *            the instance object
+     * @param instanceTags
+     *            instanceTag defined in LSF template
      * @param accountTagValue
      *            The value of the RC_ACCOUNT tag
      */
     private static List<Tag> createTagsForInstanceCreation(
         Instance instance,
+        String instanceTags,
         String accountTagValue) {
         if (log.isTraceEnabled()) {
             log.trace("Start in class AWSClient in method createTagsForInstanceCreation with parameters: instance: "
                       + instance
+                      + "instanceTags: "
+                      + instanceTags
                       + ", accountTagValue: "
                       + accountTagValue);
         }
 
-
-        List<Tag> tags = new ArrayList<Tag>();
+        // First create tag based on LSF template instanceTags
+        List<Tag> tags = createInstanceTags(instanceTags);
 
         if (instance != null) {
             String instanceId = instance.getInstanceId();
@@ -2078,6 +2093,7 @@ public class AWSClient {
         }
         if (newInstance != null) {
             List<Tag> tagsToBeCreated = createTagsForInstanceCreation(newInstance,
+            		                    usedTemplate.getInstanceTags(),
                                         awsRequest.getTagValue());
             AWSClient.tagInstance(newInstance,tagsToBeCreated);
             AWSClient.tagEbsVolumes(newInstance, tagsToBeCreated);
@@ -2091,8 +2107,8 @@ public class AWSClient {
 
     private static void tagInstance(Instance instance, List<Tag> tagsToBeCreated) {
         if (log.isTraceEnabled()) {
-            log.trace("Start in class AWSClient in method tagInstance with parameters: instance, tagsToBeCreated"
-                      + new Object[] { instance, tagsToBeCreated });
+            log.trace("Start in class AWSClient in method tagInstance with parameters:  instance: " + instance + ", tagsToBeCreated: "
+                      + tagsToBeCreated);
         }
 
         String instanceId = instance.getInstanceId();
