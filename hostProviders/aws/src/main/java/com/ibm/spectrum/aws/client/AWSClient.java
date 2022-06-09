@@ -1784,7 +1784,8 @@ public class AWSClient {
         	AwsMachine tempAwsMachine = new AwsMachine();
         	tempAwsMachine.setMachineId(activeInstance.getInstanceId());
         	if (!awsRequest.getMachines().contains(tempAwsMachine)) {
-        		log.debug("This is a newly created machine: " + activeInstance);
+        		// This instance is not exist in input awsRequest.
+        		log.debug("This is an active machine not in awsRequest: " + activeInstance);
         		newMachinesList.add(tempAwsMachine);
         	}
         }
@@ -1792,15 +1793,15 @@ public class AWSClient {
         if (!newMachinesList.isEmpty()) {
 
             // Add the new machines to the actual machines list
-            log.trace("The count of machines before adding new machines: "
+            log.trace("The count of machines before adding active machines: "
                       + awsRequest.getMachines().size());
             awsRequest.getMachines().addAll(newMachinesList);
-            log.trace("The count of machines after adding new machines: "
+            log.trace("The count of machines after adding active machines: "
                       + awsRequest.getMachines().size());
 
         }
         if (log.isTraceEnabled()) {
-            log.trace("End in class AWSClient in method updateEC2FleetStatus with return: void: "
+            log.trace("End in class AWSClient in method updateEC2FleetStatus with return: "
                       + newMachinesList);
         }
         return newMachinesList;
@@ -1899,7 +1900,7 @@ public class AWSClient {
             AwsMachine tempAwsMachine = new AwsMachine();
             tempAwsMachine.setMachineId(activeInstance.getInstanceId());
             if (!awsRequest.getMachines().contains(tempAwsMachine)) {
-                log.debug("This is a newly created machine: " + activeInstance);
+                log.debug("This is an active machine not in awsRequest: " + activeInstance);
                 newMachinesList.add(tempAwsMachine);
             }
         }
@@ -1907,10 +1908,10 @@ public class AWSClient {
         if (!newMachinesList.isEmpty()) {
 
             // Add the new machines to the actual machines list
-            log.trace("The count of machines before adding new machines: "
+            log.trace("The count of machines before adding active machines: "
                       + awsRequest.getMachines().size());
             awsRequest.getMachines().addAll(newMachinesList);
-            log.trace("The count of machines after adding new machines: "
+            log.trace("The count of machines after adding active machines: "
                       + awsRequest.getMachines().size());
 
         }
