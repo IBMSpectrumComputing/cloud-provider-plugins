@@ -233,10 +233,14 @@ public class AwsImpl implements IAws {
                             if (inst != null) {
                                 String state = inst.getState().getName();
                                 if (!state.equals(m.getStatus())) {
-                                    if (AwsConst.markedForTerminationStates.contains(m.getStatus()) &&
+                                    if ((AwsConst.markedForTerminationStates.contains(m.getStatus()) ||
+                                        "pending".equalsIgnoreCase(m.getStatus())) &&
                                             state.equalsIgnoreCase("running")) {
-                                        // Do not update instances that is still RUNNING but marked for termination
-                                        log.warn("Host <" + m.getMachineId() + "> last spot request status is <" + m.getStatus()
+                                        // Do not update the instance status
+                                        // 1. if it is still in running but marked for termination
+                                        // 2. if it first change from pending to running. getRequestStatus will 
+                                        // update its status, so that it can apply post behavior - tag the instance
+                                        log.info("Host <" + m.getMachineId() + "> last spot request status is <" + m.getStatus()
                                                  + ">, now it is in <" + state + ">");
                                     } else {
                                         log.debug("Host <" + m.getMachineId() + "> status changes from <" + m.getStatus()
