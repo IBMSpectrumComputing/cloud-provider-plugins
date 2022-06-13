@@ -1377,16 +1377,16 @@ public class AwsUtil {
     public static AwsMachine getMatchingMachineInList(AwsMachine awsMachine,
             List<AwsMachine> awsMachineList) {
         AwsMachine matchingMachine = null;
-        if (log.isTraceEnabled()) {
-            log.trace("Start in class AwsUtil in method isMachineInList with parameters: awsMachine: "
-                      + awsMachine
-                      + ", awsMachineList: "
-                      + awsMachineList );
-        }
+//        if (log.isTraceEnabled()) {
+//            log.trace("Start in class AwsUtil in method isMachineInList with parameters: awsMachine: "
+//                      + awsMachine
+//                      + ", awsMachineList: "
+//                      + awsMachineList );
+//        }
 
         if(!CollectionUtils.isNullOrEmpty(awsMachineList) && awsMachine != null) {
             for(AwsMachine tempAwsMachine : awsMachineList) {
-                log.trace("Comparing machine: [" + awsMachine + "] with machine: " + tempAwsMachine);
+//                log.trace("Comparing machine: [" + awsMachine + "] with machine: " + tempAwsMachine);
                 if(tempAwsMachine.equals(awsMachine)) {
                     log.trace("Machine : [" + awsMachine + "] matched with machine: " + tempAwsMachine);
                     matchingMachine = tempAwsMachine;
@@ -1394,9 +1394,9 @@ public class AwsUtil {
                 }
             }
         }
-        if (log.isTraceEnabled()) {
-            log.trace("End in class AwsUtil in method isMachineInList with return: AwsMachine: " + matchingMachine);
-        }
+//        if (log.isTraceEnabled()) {
+//            log.trace("End in class AwsUtil in method isMachineInList with return: AwsMachine: " + matchingMachine);
+//        }
         return matchingMachine;
     }
 
