@@ -90,8 +90,21 @@ public class AwsMachine {
      */
     @JsonInclude(Include.NON_NULL)
     private String publicDnsName;
+    
+	
+    @JsonInclude(Include.NON_NULL)
+    private Integer ncores; 
 
-    public void hide() {
+    @JsonInclude(Include.NON_NULL)
+    private Integer nthreads; 
+
+
+    @JsonInclude(Include.NON_NULL)
+    private HostAllocationType lifeCycleType;
+    
+
+
+	public void hide() {
         this.reqId = null;
         this.retId = null;
         this.template = null;
@@ -116,6 +129,9 @@ public class AwsMachine {
         this.rcAccount = m.getRcAccount();
         this.launchtime = m.getLaunchtime();
         this.publicDnsName = m.getPublicDnsName();
+        this.ncores = m.getNcores();
+        this.nthreads = m.getNthreads();
+        this.lifeCycleType = m.getLifeCycleType();
     }
 
     /**
@@ -299,6 +315,56 @@ public class AwsMachine {
     public void setPublicDnsName(String name) {
         this.publicDnsName = name;
     }
+    
+    /**
+     * 
+     * @return number of cores
+     */
+    public Integer getNcores() {
+		return ncores;
+	}
+
+    /**
+     * 
+     * @param Set number of cores
+     */
+	public void setNcores(Integer ncores) {
+		this.ncores = ncores;
+	}
+	
+	
+	 /**
+     * 
+     * @return number of threads
+     */
+	public Integer getNthreads() {
+		return nthreads;
+	}
+
+    /**
+     * 
+     * @param Set number of threads
+     */
+	public void setNthreads(Integer nthreads) {
+		this.nthreads = nthreads;
+	}
+
+    
+    /**
+     * 
+     * @return Life cycle type of the instance: onDemand or spot
+     */
+    public HostAllocationType getLifeCycleType() {
+		return lifeCycleType;
+	}
+
+    /**
+     * 
+     * @param lifeCycleType
+     */
+	public void setLifeCycleType(HostAllocationType lifeCycleType) {
+		this.lifeCycleType = lifeCycleType;
+	}
 
 
     /** (Non Javadoc)
@@ -336,6 +402,12 @@ public class AwsMachine {
         builder.append(msg);
         builder.append(", status=");
         builder.append(status);
+        builder.append(", ncores=");
+        builder.append(ncores);
+        builder.append(", nthreads=");
+        builder.append(nthreads);
+        builder.append(", lifeCycleType=");
+        builder.append(lifeCycleType);
         builder.append("]");
         return builder.toString();
     }
@@ -357,8 +429,9 @@ public class AwsMachine {
         this.setResult(machineWithNewValues.getResult());
         this.setMsg(machineWithNewValues.getMsg());
         this.setStatus(machineWithNewValues.getStatus());
-
-
+        this.setNcores(machineWithNewValues.getNcores());
+        this.setNthreads(machineWithNewValues.getNthreads());
+        this.setLifeCycleType(machineWithNewValues.getLifeCycleType());
     }
 
     @Override

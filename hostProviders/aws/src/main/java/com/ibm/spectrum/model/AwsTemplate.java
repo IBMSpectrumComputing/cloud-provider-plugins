@@ -195,8 +195,31 @@ public class AwsTemplate {
 
     @JsonInclude(Include.NON_NULL)
     private Double marketSpotPrice;
-
+    
     /**
+     * Optional. Indicates that EC2 Fleet API to be used.
+     */
+    @JsonProperty("ec2FleetConfig")
+    @JsonInclude(Include.NON_NULL)
+    private String ec2FleetConfig;
+    
+    /**
+     * Optional [Internal]. Indicates the fleetType to be used.
+     */
+    @JsonProperty("fleetType")
+    @JsonInclude(Include.NON_NULL)
+    private String fleetType;
+    
+
+	/**
+     * Optional. Indicates the ratio between on-demand and spot target capacity.
+     */
+    @JsonProperty("onDemandTargetCapacityRatio")
+    @JsonInclude(Include.NON_NULL)
+    private Double onDemandTargetCapacityRatio;
+
+
+	/**
      * <p>Title: </p>
      * <p>Description: </p>
      */
@@ -229,6 +252,8 @@ public class AwsTemplate {
         this.launchTemplateId = t.getLaunchTemplateId();
         this.launchTemplateVersion = t.getLaunchTemplateVersion();
         this.marketSpotPrice = t.getMarketSpotPrice();
+        this.ec2FleetConfig = t.getEc2FleetConfig();
+        this.onDemandTargetCapacityRatio = t.getOnDemandTargetCapacityRatio();
     }
 
     public void hide() {
@@ -592,6 +617,12 @@ public class AwsTemplate {
         builder.append(this.launchTemplateVersion);
         builder.append(", marketSpotPrice=");
         builder.append(this.marketSpotPrice);
+        builder.append(", ec2FleetConfig=");
+        builder.append(this.ec2FleetConfig);
+        builder.append(", fleetType=");
+        builder.append(this.fleetType);
+        builder.append(", onDemandTargetCapacityRatio=");
+        builder.append(this.onDemandTargetCapacityRatio);
         builder.append("]");
         return builder.toString();
     }
@@ -659,5 +690,28 @@ public class AwsTemplate {
     public void setMarketSpotPrice(Double marketSpotPrice) {
         this.marketSpotPrice = marketSpotPrice;
     }
+    
+    public String getEc2FleetConfig() {
+		return ec2FleetConfig;
+	}
 
+	public void setEc2FleetConfig(String ec2FleetConfig) {
+		this.ec2FleetConfig = ec2FleetConfig;
+	}
+    
+    public String getFleetType() {
+		return fleetType;
+	}
+
+	public void setFleetType(String fleetType) {
+		this.fleetType = fleetType;
+	}
+
+	public Double getOnDemandTargetCapacityRatio() {
+		return onDemandTargetCapacityRatio;
+	}
+
+	public void setOnDemandTargetCapacityRatio(Double onDemandTargetCapacityRatio) {
+		this.onDemandTargetCapacityRatio = onDemandTargetCapacityRatio;
+	}
 }
