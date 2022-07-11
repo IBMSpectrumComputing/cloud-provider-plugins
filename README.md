@@ -59,7 +59,41 @@ The following is an example of content of an input JSON file:
 
 The following is an example of content of JSON output to stdout:
 ```
-{ "templates": [ { "templateId": "Template-VM-1", "maxNumber": 200, "attributes": { "mem": [ "Numeric", "8192" ], "ncpus": [ "Numeric", "1" ], "zone": [ "String", "asiasoutheast" ], "azurehost": [ "Boolean", "1" ], "ncores": [ "Numeric", "1" ], "type": [ "String", "X86_64" ] }, "instanceTags": "group=LSF2"} ] }
+{
+    "templates":[
+        {
+            "templateId":"Template-VM-1",
+            "maxNumber":200,
+            "attributes":{
+                "mem":[
+                    "Numeric",
+                    "8192"
+                ],
+                "ncpus":[
+                    "Numeric",
+                    "1"
+                ],
+                "zone":[
+                    "String",
+                    "asiasoutheast"
+                ],
+                "azurehost":[
+                    "Boolean",
+                    "1"
+                ],
+                "ncores":[
+                    "Numeric",
+                    "1"
+                ],
+                "type":[
+                    "String",
+                    "X86_64"
+                ]
+            },
+            "instanceTags":"group=LSF2"
+        }
+    ]
+}
 ```
 
 ## requestMachines.sh
@@ -67,12 +101,24 @@ Request to create instances from the cloud.
 
 The following is an example of the content of an input JSON file:
 ```
-{ "template": { "templateId": "Template-VM-1", "machineCount": 1 }, "rc_account": "default", "userData": { } }
+{
+    "template":{
+        "templateId":"Template-VM-1",
+        "machineCount":1
+    },
+    "rc_account":"default",
+    "userData":{
+
+    }
+}
 ```
 
 The following is an example of JSON output to stdout:
 ```
-{ "message": "RequestVM succeeded from Azure.", "requestId": "c95595c4-0c07-4eb2-8c0c-94f364ac8e76" }
+{
+    "message":"RequestVM succeeded from Azure.",
+    "requestId":"c95595c4-0c07-4eb2-8c0c-94f364ac8e76"
+}
 ```
 
 ## requestReturnMachines.sh
@@ -80,12 +126,22 @@ Request to terminate instances on the cloud.
 
 The following is an example of content of an input JSON file:
 ```
-{ "machines": [ { "name": "host-10-1-1-36", "machineId": "4fa69d720e06c50a89fb" } ] }
+{
+    "machines":[
+        {
+            "name":"host-10-1-1-36",
+            "machineId":"4fa69d720e06c50a89fb"
+        }
+    ]
+}
 ```
 
 The following is an example of example JSON output to stdout:
 ```
-{ "message": "Request to terminate instances successful.", "requestId": "5f6a3f07-840e-4fa6-9d72-0e06c50a89fb" }
+{
+    "message":"Request to terminate instances successful.",
+    "requestId":"5f6a3f07-840e-4fa6-9d72-0e06c50a89fb"
+}
 ```
 
 ## getRequestStatus.sh
@@ -93,12 +149,38 @@ Get the request status for a request. The request can be either a create instanc
 
 The following is an example of the content of an input JSON file:
 ```
-{ "requests": [ { "requestId": "7de9425e-6be8-4e50-8dc7-dbcab7ec3102" } ] }
+{
+    "requests":[
+        {
+            "requestId":"7de9425e-6be8-4e50-8dc7-dbcab7ec3102"
+        }
+    ]
+}
 ```
 
 The following is an example of JSON output to stdout:
 ```
-{ "requests": [ { "status": "complete", "machines": [ { "machineId": "4e508dc7dbcab7ec3102", "name": "host-10-100-2-118", "result": "succeed", "status": "RUNNING", "privateIpAddress": "10.100.2.118", "rcAccount": "default", "message": "", "launchtime": 1494001568 } ], "requestId": "7de9425e-6be8-4e50-8dc7-dbcab7ec3102", "message": "" } ] }
+{
+    "requests":[
+        {
+            "status":"complete",
+            "machines":[
+                {
+                    "machineId":"4e508dc7dbcab7ec3102",
+                    "name":"host-10-100-2-118",
+                    "result":"succeed",
+                    "status":"RUNNING",
+                    "privateIpAddress":"10.100.2.118",
+                    "rcAccount":"default",
+                    "message":"",
+                    "launchtime":1494001568
+                }
+            ],
+            "requestId":"7de9425e-6be8-4e50-8dc7-dbcab7ec3102",
+            "message":""
+        }
+    ]
+}
 ```
 
 The following are valid values for a request **status**:
@@ -116,17 +198,41 @@ Check whether any of the instances in the input JSON file are terminated.
 
 The following is an example of the content of an input JSON file:
 ```
-{ "machines": [ { "name": "host-10-1-1-36", "machineId": "4fa69d720e06c50a89fb" }, { "name": "host-10-1-1-37", "machineId": "9fas9d720e06c50a782b" } ] }
+{
+    "machines":[
+        {
+            "name":"host-10-1-1-36",
+            "machineId":"4fa69d720e06c50a89fb"
+        },
+        {
+            "name":"host-10-1-1-37",
+            "machineId":"9fas9d720e06c50a782b"
+        }
+    ]
+}
 ```
 The following is an example of JSON output to stdout if the cloud terminated any instances, such as AWS spot instances.
 
 ```
-{ "requests": [ { "machine": "host-10-1-1-36", "machineId": "4fa69d720e06c50a89fb" } ] }
+{
+    "requests":[
+        {
+            "machine":"host-10-1-1-36",
+            "machineId":"4fa69d720e06c50a89fb"
+        }
+    ]
+}
 ```
 
 If there are no terminated instances, the output returns an empty "requests" list:
 ```
-{ "status": "complete", "message": "", "requests": [ ] }
+{
+    "status":"complete",
+    "message":"",
+    "requests":[
+
+    ]
+}
 ```
 
 # ENV variables
