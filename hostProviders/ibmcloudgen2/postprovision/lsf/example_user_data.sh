@@ -71,6 +71,14 @@ fi
 #echo "instance_id doesn't exist in envrionment variable" >> $logfile
 #fi
 
+#vm_type=$(curl http://169.254.169.254/metadata/v1/instance/profile)
+#if [ -n "$vm_type" ]; then
+#    sed -i "s/\(LSF_LOCAL_RESOURCES=.*\)\"/\1 [resourcemap $vm_type*vm_type]\"/" $LSF_CONF_FILE
+#    echo "Update LSF_LOCAL_RESOURCES in $LSF_CONF_FILE successfully, add [resourcemap ${vm_type}*vm_type]" >> $LOG_FILE
+#else
+#    echo "Cannot get vm type" >> $LOG_FILE
+#fi
+
 #if [ -n "$template_id" ]; then
 #sed -i "s/\(LSF_LOCAL_RESOURCES=.*\)\"/\1 [resourcemap $template_id*templateID]\"/" $LSF_CONF_FILE
 #echo "update LSF_LOCAL_RESOURCES in $LSF_CONF_FILE successfully, add [resourcemap ${template_id}*templateID]" >> $logfile

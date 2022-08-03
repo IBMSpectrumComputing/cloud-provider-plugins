@@ -38,6 +38,10 @@ instance_id=$(curl "http://metadata.google.internal/computeMetadata/v1/instance/
 if [ -n "$instance_id" ]; then
 sed -i "s/\(LSF_LOCAL_RESOURCES=.*\)\"/\1 [resourcemap $instance_id*instanceID]\"/" $LSF_CONF_FILE
 fi
+vm_type=$(curl "http://metadata.google.internal/computeMetadata/v1/instance/machine-type" -H "Metadata-Flavor: Google")
+if [ -n "$vm_type" ]; then
+sed -i "s/\(LSF_LOCAL_RESOURCES=.*\)\"/\1 [resourcemap $vm_type*vm_type]\"/" $LSF_CONF_FILE
+fi
 if [ -n "$template_id" ]; then
 sed -i "s/\(LSF_LOCAL_RESOURCES=.*\)\"/\1 [resourcemap $template_id*templateID]\"/" $LSF_CONF_FILE
 fi
