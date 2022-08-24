@@ -144,6 +144,10 @@ def create_instance(rg, vpc, profile, zone, image, subnet, sgs, ssh_id, template
   zone_identity_model = {}
   zone_identity_model['name'] = zone
 
+  # Construct a dict representation of a InstanceMetadataServicePrototype model
+  instance_metadata_model = {}
+  instance_metadata_model['enabled'] = True
+
   # Construct a dict representation of a InstancePrototypeInstanceByImage model
   instance_prototype_model = {}
   instance_prototype_model['keys'] = [key_identity_model]
@@ -154,6 +158,7 @@ def create_instance(rg, vpc, profile, zone, image, subnet, sgs, ssh_id, template
   instance_prototype_model[
     'primary_network_interface'] = network_interface_prototype_model
   instance_prototype_model['zone'] = zone_identity_model
+  instance_prototype_model['metadata_service'] = instance_metadata_model
   if rg:
     resource_group_identity_model = {}
     resource_group_identity_model['id'] = rg
