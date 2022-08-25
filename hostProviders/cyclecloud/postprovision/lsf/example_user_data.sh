@@ -44,6 +44,14 @@ else
     echo "Can not get instance ID" >> $LOG_FILE
 fi
 
+vm_type=$(curl -H Metadata:true "http://169.254.169.254/metadata/instance/compute/vmSize?api-version=2018-10-01&format=text")
+if [ -n "$vm_type" ]; then
+    sed -i "s/\(LSF_LOCAL_RESOURCES=.*\)\"/\1 [resourcemap $vm_type*vm_type]\"/" $LSF_CONF_FILE
+    echo "Update LSF_LOCAL_RESOURCES in $LSF_CONF_FILE successfully, add [resourcemap ${vm_type}*vm_type]" >> $LOG_FILE
+else
+    echo "Cannot get vm type" >> $LOG_FILE
+fi
+
 #
 # Set template ID to the file lsf.conf
 #
