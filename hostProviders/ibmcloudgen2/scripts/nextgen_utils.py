@@ -34,6 +34,7 @@ class RCInstance:
     self.retId = ""
     self.template = ""
     self.rcAccount = ""
+    self.statusReasons = []
 
   def copy(self, inst):
     self.machineId = inst.machineId
@@ -47,7 +48,8 @@ class RCInstance:
     self.retId = inst.retId
     self.template = inst.template
     self.rcAccount = inst.rcAccount
-   
+    self.statusReasons = inst.statusReasons   
+
   def populate(self, data):
     if 'machineId' in data:
       self.machineId = data['machineId']
@@ -71,6 +73,8 @@ class RCInstance:
       self.template = data['template']
     if 'rcAccount' in data:
       self.rcAccount = data['rcAccount']
+    if 'statusReasons' in data:
+      self.statusReasons = data['statusReasons']
    
   @property
   def machineId(self):
@@ -149,6 +153,13 @@ class RCInstance:
   def rcAccount(self, value):
     self._rcAccount = value
 
+  @property
+  def statusReasons(self):
+    return self._statusReasons
+  @statusReasons.setter
+  def statusReasons(self, value):
+    self._statusReasons = value
+
 class RcInOut:
 
   def __init__(self, dirname=""):
@@ -174,6 +185,7 @@ class RcInOut:
           'retId': retId if len(retId) != 0 else instance.retId,
           'template': instance.template if len(instance.template) != 0 else templateId,
           'rcAccount': instance.rcAccount,
+          'statusReasons': instance.statusReasons
       })
 
     return data
