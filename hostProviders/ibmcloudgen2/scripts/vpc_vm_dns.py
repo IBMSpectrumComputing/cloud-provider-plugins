@@ -113,7 +113,7 @@ def create_instance(rg, vpc, profile, zone, image, subnet, sgs, ssh_id, template
     security_group_identity_model = {}
     security_group_identity_model['id'] = id
     security_group_identity_model_list.append(security_group_identity_model)
-  
+ 
   # Construct a dict representation of a SubnetIdentityById model
   subnet_identity_model = {}
   subnet_identity_model['id'] = subnet
@@ -163,8 +163,8 @@ def create_instance(rg, vpc, profile, zone, image, subnet, sgs, ssh_id, template
     resource_group_identity_model = {}
     resource_group_identity_model['id'] = rg
     instance_prototype_model['resource_group'] = resource_group_identity_model
-   
-  if os.path.isfile(userDataFile):  
+  
+  if os.path.isfile(userDataFile):
      f = open(userDataFile, "r");
      user_data = f.read()
      exportCmd = ""
@@ -186,7 +186,7 @@ def create_instance(rg, vpc, profile, zone, image, subnet, sgs, ssh_id, template
      logging.info("exporting: " + exportCmd)
      user_data = user_data.replace("%EXPORT_USER_DATA%", exportCmd)
      instance_prototype_model['user_data'] = user_data
- 
+
   # Set up parameter values
   instance_prototype = instance_prototype_model
 
@@ -260,6 +260,7 @@ def request_new_machines(machineCount, tagValue):
       rcInstance.launchtime = int(time.time())
       rcInstance.rcAccount = tagValue
       rcInstance.result = "executing"
+      rcInstance.statusReason = instance['status_reasons']
 
       logging.info("instance= %s %s" % (rcInstance.machineId, rcInstance.name))
       instanceList.append(rcInstance)
@@ -277,6 +278,7 @@ def wait_for_vm_ready(instanceList):
   readyList=[]
   stuckList=[]
   failList=[]
+  capacityStatusReason = None
 
   updateInstanceList = check_status(instanceList)
   for index, update_instance in enumerate(updateInstanceList):
@@ -287,6 +289,8 @@ def wait_for_vm_ready(instanceList):
 
     if instance.privateIpAddress == "":
       instance.privateIpAddress = update_instance.privateIpAddress
+
+    instance.statusReasons = update_instance.statusReasons
 
     if (update_instance.status == 'running'):
       instance.result = "succeed"
@@ -299,9 +303,18 @@ def wait_for_vm_ready(instanceList):
       instance.result = "executing"
       duration = time.time() - instance.launchtime
 
+      #check whether status_reasons is related to capacity issue
+      #If there is an instance has capacity status_reasons, we will return the first one we found to
+      #indicate the stack has capacity issue.
+      myCapacityReason = get_capacity_statusReason(update_instance.statusReasons)
+ 
       # if VM is not in the running state after 120 seconds, then give up.
       if (duration > timeout) or (update_instance.status == 'failed'):
-        if (update_instance.status == 'failed'):
+        if (update_instance.status == 'failed') and (myCapacityReason is not None):
+          logging.error("VM %s is in the failed state with reason <%s>. Will clean up and retry!" % (instance.name, ','.join(update_instance.statusReasons)))
+          if capacityStatusReason is None:
+              capacityStatusReason = myCapacityReason
+        elif (update_instance.status == 'failed'):
           logging.error("VM %s is in the failed state. Will clean up and retry!" % (instance.name))
         else:
           logging.error("VM %s still not in the running state after %s seconds" % (instance.name, duration))
@@ -315,7 +328,7 @@ def wait_for_vm_ready(instanceList):
 
   logging.info("time (sec) for checking %s VM status (ready): %s " % (len(instanceList), time.time()-time1))
 
-  return readyList, stuckList, failList
+  return readyList, stuckList, failList, capacityStatusReason
 
 def delete_multi_resources(args):
   instance = args
@@ -426,8 +439,14 @@ def update_multi_instances(args):
     instance.status = myInstance['status']
 
     # update the ip of the instance
-    instance.privateIpAddress = myInstance['network_interfaces'][0]['primary_ipv4_address']
-
+    if 'network_interfaces' in myInstance and myInstance['network_interfaces'] is not None:
+      if 'primary_ipv4_address' in myInstance['network_interfaces'][0]:
+        instance.privateIpAddress = myInstance['network_interfaces'][0]['primary_ipv4_address']
+    
+    # update statusReasons
+    if 'status_reasons' in myInstance:
+      instance.statusReasons = myInstance['status_reasons']
+    
     logging.debug("instance " + instance.name + " has status of " + instance.status + " from cloud")
   except Exception as e:
     code = getattr(e, 'code', 'N/A')
@@ -445,3 +464,26 @@ def check_status(instanceList):
   args_map = [ inst for inst in instanceList ]
   multi_results = vmPool.map(update_multi_instances, args_map)
   return multi_results
+
+def get_capacity_statusReason(reasonsList):
+  if len(reasonsList) == 0:
+    return None
+  
+  #If there is expand code related to capacity, you can return
+  #"other_capacity_issues" for it, ebrokerd could recognize it.
+  #If you do not care the detail code, this way could help you
+  #integrate new reason code without modifying ebrokerd.
+  if ("cannot_start_capacity" in reasonsList):
+    return "cannot_start_capacity"
+  elif ("cannot_start_compute" in reasonsList):
+    return "cannot_start_compute"
+  elif ("cannot_start_ip_address" in reasonsList):
+    return "cannot_start_ip_address"
+  elif ("cannot_start_network" in reasonsList):
+    return "cannot_start_network"
+  elif ("cannot_start_placement_group" in reasonsList):
+    return "cannot_start_placement_group"
+  elif ("cannot_start_storage" in reasonsList):
+    return "cannot_start_storage"
+  else: 
+    return None

@@ -93,6 +93,7 @@ def HandleAddStatus(hisObj, outForReq, outputJson):
     sys.exit("Fail to get local hostname and|or local ip")
 
   request = outForReq.requestId 
+  message = ""
 
   templateId, instanceList, reqId = hisObj.getVmListFromFile(request)
 
@@ -111,7 +112,7 @@ def HandleAddStatus(hisObj, outForReq, outputJson):
 
   logging.info("Request (%s): Checking if VMs are ready..." % request)
   logging.info("checking for %s machines" % (len(instanceList)))
-  readyList, stuckList, failList = reqVpc.wait_for_vm_ready(instanceList)
+  readyList, stuckList, failList, capacityStatusReason = reqVpc.wait_for_vm_ready(instanceList)
   pendingSize = len(instanceList) - len(readyList) - len(stuckList) - len(failList)
   if len(readyList) == len(instanceList):
     outForReq.status = "complete"
@@ -124,7 +125,13 @@ def HandleAddStatus(hisObj, outForReq, outputJson):
     else:
       outForReq.status = "complete_with_error"
 
-    if len(stuckList) > 0 and len(failList) > 0:
+    if capacityStatusReason is not None:
+      outForReq.message ="some vms still not in the running state due to capacity issues <%s>"%(capacityStatusReason)
+      logging.error("There are vms not in the running state due to capacity issues <%s>" % (capacityStatusReason))
+      if message == "":
+        message = "Error Code: %s"%(capacityStatusReason)
+ 
+    elif len(stuckList) > 0 and len(failList) > 0:
       outForReq.message = "some vms still not in the running state after timeout and some vms cannot be queried"
       logging.error("%s vms are not in the running state after %s seconds and %s vm cannot be queried" % (len(stuckList), timeout, len(failList)))
     elif len(stuckList) > 0:
@@ -149,6 +156,8 @@ def HandleAddStatus(hisObj, outForReq, outputJson):
 
   # append the result for the current request
   outputJson['requests'].append(outForReq.data)
+  if 'message' in outputJson and not outputJson['message'].startswith("Error Code: "):
+    outputJson['message'] = message
 
 def HandleRemoveStatus(hisObj, outForReq, outputJson):
   request = outForReq.requestId
@@ -236,6 +245,7 @@ def main():
 
   outputJson = {}
   outputJson['requests'] = []
+  outputJson['message'] = ""
   for request in inputJson.requestList:
     
     outForReq = GetStatusOutput()
