@@ -63,23 +63,7 @@ fi
 #echo "zone doesn't exist in envrionment variable" >> $logfile
 #fi
 
-#For access to metadata API, need to send access token with each request
-#Metadata API must be enabled for the instance for this to work
-#access_token=`curl -X PUT "http://169.254.169.254/instance_identity/v1/token?version=2022-08-02"\
-#  -H "Metadata-Flavor: ibm"\
-#  -H "Accept: application/json"\
-#  -d '{ \
-#        "expires_in": 3600 \
-#      }' | jq -r '(.access_token)'`
-
-#instance_info=`curl -X GET "http://169.254.169.254/metadata/v1/instance?version=2022-08-02"\
-#  -H "Accept:application/json" \
-#  -H "Authorization: Bearer $access_token"`
-
-#Instance id Method 1: retrieve from BIOS with dmidecode
 instance_id=$(dmidecode | grep Family | cut -d ' ' -f 2 |head -1)
-#Instance id Method 2: retrieve from metadata API. reqiures auth token and metadata service to be enabled
-#instance_id=`echo $instance_info | jq -r '.id'`
 if [ -n "$instance_id" ]; then
     sed -i "s/\(LSF_LOCAL_RESOURCES=.*\)\"/\1 [resourcemap $instance_id*instanceID]\"/" $LSF_CONF_FILE
     echo "Update LSF_LOCAL_RESOURCES in $LSF_CONF_FILE successfully, add [resourcemap ${instance_id}*instanceID]" >> $logfile
@@ -87,7 +71,6 @@ else
     echo "Can not get instance ID" >> $logfile
 fi
 
-#vm_type=`echo $instance_info | jq -r '.profile .name'`
 #if [ -n "$vm_type" ]; then
 #    sed -i "s/\(LSF_LOCAL_RESOURCES=.*\)\"/\1 [resourcemap $vm_type*vm_type]\"/" $LSF_CONF_FILE
 #    echo "Update LSF_LOCAL_RESOURCES in $LSF_CONF_FILE successfully, add [resourcemap ${vm_type}*vm_type]" >> $logfile
