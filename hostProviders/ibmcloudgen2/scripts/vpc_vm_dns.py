@@ -287,12 +287,12 @@ def wait_for_vm_ready(instanceList):
     # update the status, ip and result for instances in instanceList
     instance.status = update_instance.status
 
-    if instance.privateIpAddress == "":
-      instance.privateIpAddress = update_instance.privateIpAddress
+    #if instance.privateIpAddress == "":
+    instance.privateIpAddress = update_instance.privateIpAddress
 
     instance.statusReasons = update_instance.statusReasons
 
-    if (update_instance.status == 'running'):
+    if (update_instance.status == 'running' and instance.privateIpAddress and instance.privateIpAddress != "0.0.0.0"):
       instance.result = "succeed"
       readyList.append(instance)
     elif (update_instance.status in ["terminated"]):
