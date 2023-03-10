@@ -224,7 +224,24 @@ class RcInOut:
        fp = open(full_path, "r")
        if fp.mode == 'r':
           contents = fp.read()
-          theJson = json.loads(contents)
+          try:
+            theJson = json.loads(contents)
+          except Exception as e:
+            fp.close()
+            logging.error("The content of the file <"+full_path+"> cannot be translated into a JSON object. " + repr(e))
+            if contents is None:
+              logging.debug("The content of the file <"+full_path+">: empty")
+            else:
+              logging.debug("The content of the file <"+full_path+">: "+contents)
+            logging.error("Delete the bad file <"+full_path+"> and rebuild it.")
+            os.remove(full_path)
+            requestList.append(data)
+            requestsObj['requests'] = requestList
+            with open(full_path, 'w+') as outfile:
+              json.dump(requestsObj, outfile, indent=2)
+              outfile.close()
+            return
+ 
           if "requests" in theJson:
              for req in theJson['requests']:
                  if requestId == req['requestId']:
@@ -238,9 +255,7 @@ class RcInOut:
           else:
              requestList.append(data)
              theJson['requests'] = requestList
-       fp = open(full_path, "w")
-       json.dump(theJson, fp, indent=2)
-       fp.close()
+       self.dumpJsonToFile(theJson, full_path)
   
   def updateVmListToFile(self, requestId, rcInstanceList, retId):
     full_path = self.getFullPath(requestId)
@@ -275,10 +290,35 @@ class RcInOut:
                        rcInstList.extend(tmpInstList)
                     req['machines'] = rcInstList 
        fp.close()
-       
-       fp = open(full_path, "w")
-       json.dump(theJson, fp, indent=2)
-       fp.close()
+       self.dumpJsonToFile(theJson, full_path) 
+
+  #The more safe way to dump json object to file
+  def dumpJsonToFile(self, data, full_path):
+    #backup orginal file if exist
+    fnameBkp = full_path+".bkp"
+    hasBkp = 0
+    if os.path.exists(full_path):
+      try:
+        os.rename(full_path, fnameBkp)
+        hasBkp = 1
+        logging.debug("Backup json file <"+full_path+"> sucess.")
+      except Exception as e:
+        logging.debug("Backup json file <"+full_path+"> error. "+repr(e))
+    #dump to file
+    try:
+      #success, use it and remove backup one
+      fp = open(full_path, "w")
+      json.dump(data, fp, indent=2)
+      if hasBkp:
+        os.remove(fnameBkp)
+      fp.close()
+    except Exception as e:
+      #failed, then rollback to backup one
+      logging.error("Write object to json file <"+full_path+"> error. "+repr(e))
+      fp.close()
+      if hasBkp:
+        os.rename(full_path, fnameBkp)
+        logging.error("Rollback json file <"+full_path+">.")
  
   def getVmListFromFile(self, reqId):
     full_path = self.getFullPath(reqId)
@@ -322,9 +362,7 @@ class RcInOut:
 
   def writeAllRequests(self, data):
       full_path = self.getFullPath("")
-      fp = open(full_path, "w")
-      json.dump(data, fp, indent=2)
-      fp.close()
+      self.dumpJsonToFile(data, full_path)
 
   def getVmListFromJson(self, filename):
     full_path = self.getFullPath(filename)

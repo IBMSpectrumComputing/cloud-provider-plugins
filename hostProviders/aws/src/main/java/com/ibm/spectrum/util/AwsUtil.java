@@ -306,13 +306,37 @@ public class AwsUtil {
     * @return String
     * @throws
      */
-    public static synchronized  <T> void toJsonFile(T obj, String jfname) {
+    public static synchronized  <T> void toJsonFile(T obj, String jfname) {   
+    	File jf = new File(jfname);
+    	String fileNameBkp = jfname + ".bkp";
+    	File fileBkp = new File(fileNameBkp);
         try {
+        	if (jf.exists()) {
+        		if (fileBkp.exists()) {
+        			fileBkp.delete();
+        		}
+        		if (!jf.renameTo(fileBkp)) {
+        			log.error("Backup json file <" + jfname + "> error.");
+        		} else {
+        			log.debug("Backup json file <" + jfname + "> success.");
+        		}
+        	}
             ObjectMapper mapper = new ObjectMapper();
-            mapper.writeValue(new File(jfname), obj);
+            mapper.writerWithDefaultPrettyPrinter().writeValue(jf, obj);
+            
+            if (fileBkp.exists()) {
+                fileBkp.delete();
+            }
         } catch(Exception e) {
-            log.error("Write object to json file error.", e);
-        }
+            log.error("Write object to json file <" + jfname + "> error.", e);
+            if (fileBkp.exists()) {
+            	if (!fileBkp.renameTo(jf)) {
+            		log.error("Rollback json file <" + jfname + "> error.");
+            	} else {
+            		log.debug("Rollback json file <" + jfname + "> success.");
+            	}
+            }
+        }   
     }
 
     /**
@@ -326,11 +350,34 @@ public class AwsUtil {
     * @throws
      */
     public static synchronized <T> void toJsonFile(T obj, File jf) {
+    	String fileNameBkp = jf.getAbsolutePath() + ".bkp";
+    	File fileBkp = new File(fileNameBkp);
         try {
+        	if (jf.exists()) {
+        		if (fileBkp.exists()) {
+        			fileBkp.delete();
+        		}
+        		if (!jf.renameTo(fileBkp)) {
+        			log.error("Backup json file <" + jf.getAbsolutePath() + "> error.");
+        		} else {
+        			log.debug("Backup json file <" + jf.getAbsolutePath() + "> success.");
+        		}
+        	}
             ObjectMapper mapper = new ObjectMapper();
-            mapper.writeValue(jf, obj);
+            mapper.writerWithDefaultPrettyPrinter().writeValue(jf, obj);
+            
+            if (fileBkp.exists()) {
+                fileBkp.delete();
+            }
         } catch(Exception e) {
-            log.error("Write object to json file error.", e);
+            log.error("Write object to json file <" + jf.getAbsolutePath() + "> error.", e);
+            if (fileBkp.exists()) {
+            	if (!fileBkp.renameTo(jf)) {
+            		log.error("Rollback json file <" + jf.getAbsolutePath() + "> error.");
+            	} else {
+            		log.debug("Rollback json file <" + jf.getAbsolutePath() + "> success.");
+            	}
+            }
         }
     }
 
@@ -545,6 +592,10 @@ public class AwsUtil {
             AwsUtil.toJsonFile(ae, jf);
         } catch (Exception e) {
             log.error("Error: ", e);
+            if (jf.exists() && (jf.length() == 0)) {
+            	log.error("aws-db.json file is empty which cannot be parsed to json object, remove it.");
+            	jf.delete();
+            }
         }
     }
 

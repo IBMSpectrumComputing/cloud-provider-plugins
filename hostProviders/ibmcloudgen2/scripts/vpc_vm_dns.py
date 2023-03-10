@@ -442,7 +442,10 @@ def update_multi_instances(args):
     if 'network_interfaces' in myInstance and myInstance['network_interfaces'] is not None:
       if 'primary_ipv4_address' in myInstance['network_interfaces'][0]:
         instance.privateIpAddress = myInstance['network_interfaces'][0]['primary_ipv4_address']
-    
+    if instance.privateIpAddress is None or not instance.privateIpAddress:
+        if myInstance["primary_network_interface"] and myInstance["primary_network_interface"]["primary_ip"]:
+            instance.privateIpAddress = myInstance["primary_network_interface"]["primary_ip"]["address"]
+
     # update statusReasons
     if 'status_reasons' in myInstance:
       instance.statusReasons = myInstance['status_reasons']
