@@ -96,6 +96,8 @@ def main():
   terminatedList = []
   hisFile = RcInOut(work_dir)
   requestData =  hisFile.readAllRequests()
+  if requestData is None:
+    requestData = {}
   tempIdToVms = {}
   if "requests" in requestData:
      for req in requestData['requests']:
