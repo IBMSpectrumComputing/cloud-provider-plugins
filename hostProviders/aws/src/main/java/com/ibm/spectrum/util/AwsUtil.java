@@ -311,16 +311,16 @@ public class AwsUtil {
     	String fileNameBkp = jfname + ".bkp";
     	File fileBkp = new File(fileNameBkp);
         try {
-        	if (jf.exists()) {
-        		if (fileBkp.exists()) {
-        			fileBkp.delete();
-        		}
-        		if (!jf.renameTo(fileBkp)) {
-        			log.error("Backup json file <" + jfname + "> error.");
-        		} else {
-        			log.debug("Backup json file <" + jfname + "> success.");
-        		}
-        	}
+            if (jf.exists()) {
+                if (fileBkp.exists()) {
+                    fileBkp.delete();
+                }
+                if (!jf.renameTo(fileBkp)) {
+                    log.error("Backup json file <" + jfname + "> error.");
+                } else {
+                    log.debug("Backup json file <" + jfname + "> success.");
+                }
+            }
             ObjectMapper mapper = new ObjectMapper();
             mapper.writerWithDefaultPrettyPrinter().writeValue(jf, obj);
             
@@ -350,19 +350,19 @@ public class AwsUtil {
     * @throws
      */
     public static synchronized <T> void toJsonFile(T obj, File jf) {
-    	String fileNameBkp = jf.getAbsolutePath() + ".bkp";
-    	File fileBkp = new File(fileNameBkp);
+        String fileNameBkp = jf.getAbsolutePath() + ".bkp";
+        File fileBkp = new File(fileNameBkp);
         try {
-        	if (jf.exists()) {
-        		if (fileBkp.exists()) {
-        			fileBkp.delete();
-        		}
-        		if (!jf.renameTo(fileBkp)) {
-        			log.error("Backup json file <" + jf.getAbsolutePath() + "> error.");
-        		} else {
-        			log.debug("Backup json file <" + jf.getAbsolutePath() + "> success.");
-        		}
-        	}
+            if (jf.exists()) {
+                if (fileBkp.exists()) {
+                    fileBkp.delete();
+                }
+                if (!jf.renameTo(fileBkp)) {
+                    log.error("Backup json file <" + jf.getAbsolutePath() + "> error.");
+                } else {
+                    log.debug("Backup json file <" + jf.getAbsolutePath() + "> success.");
+                }
+            }
             ObjectMapper mapper = new ObjectMapper();
             mapper.writerWithDefaultPrettyPrinter().writeValue(jf, obj);
             
@@ -372,11 +372,11 @@ public class AwsUtil {
         } catch(Exception e) {
             log.error("Write object to json file <" + jf.getAbsolutePath() + "> error.", e);
             if (fileBkp.exists()) {
-            	if (!fileBkp.renameTo(jf)) {
-            		log.error("Rollback json file <" + jf.getAbsolutePath() + "> error.");
-            	} else {
-            		log.debug("Rollback json file <" + jf.getAbsolutePath() + "> success.");
-            	}
+                if (!fileBkp.renameTo(jf)) {
+                    log.error("Rollback json file <" + jf.getAbsolutePath() + "> error.");
+                } else {
+                    log.debug("Rollback json file <" + jf.getAbsolutePath() + "> success.");
+                }
             }
         }
     }
@@ -399,9 +399,12 @@ public class AwsUtil {
             return (T) mapper.readValue(jsonFile, type);
         } catch(IOException e) {
             log.error("Change json file to object error.", e);
+            if (jsonFile.length() == 0) {
+                log.error("The file <" + jsonFile.getAbsolutePath() + "> is empty which cannot be parsed to json object, remove it.");
+                jsonFile.delete();
+            }
         }
         
-
         return null;
     }
     
@@ -526,6 +529,10 @@ public class AwsUtil {
         }
 
         AwsEntity ae = AwsUtil.toObject(jf, AwsEntity.class);
+        if (ae == null) {
+            return;
+        }
+
         if (CollectionUtils.isNullOrEmpty(ae.getReqs())) {
             return;
         }
@@ -579,6 +586,10 @@ public class AwsUtil {
 
             // Append VM record
             AwsEntity ae = AwsUtil.toObject(jf, AwsEntity.class);
+            if (ae == null) {
+                return;
+            }
+
             for (AwsRequest rq : ae.getReqs()) {
                 // Update exist record
                 if (rq.getReqId().equals(req.getReqId())) {
@@ -592,10 +603,6 @@ public class AwsUtil {
             AwsUtil.toJsonFile(ae, jf);
         } catch (Exception e) {
             log.error("Error: ", e);
-            if (jf.exists() && (jf.length() == 0)) {
-            	log.error("aws-db.json file is empty which cannot be parsed to json object, remove it.");
-            	jf.delete();
-            }
         }
     }
 
@@ -615,6 +622,11 @@ public class AwsUtil {
         }
 
         AwsEntity ae = AwsUtil.toObject(f, AwsEntity.class);
+
+        if (ae == null) {
+            return null;
+        }
+
         List<AwsRequest> reqLst = ae.getReqs();
         log.debug("Returning the requests: " + reqLst);
         if (CollectionUtils.isNullOrEmpty(reqLst)) {
@@ -664,10 +676,12 @@ public class AwsUtil {
     public static AwsEntity getFromFile() {
         File f = new File(workDir + "/" + provStatusFile);
         if (!f.exists()) {
+            log.debug("The file <"+f.getAbsolutePath()+"> does not exist");
             return null;
         }
 
         AwsEntity ae = AwsUtil.toObject(f, AwsEntity.class);
+
         return ae;
     }
 
@@ -711,6 +725,10 @@ public class AwsUtil {
         }
 
         AwsEntity ae = AwsUtil.toObject(jf, AwsEntity.class);
+        if (ae == null) {
+            return vmMap;
+        }
+
         List<AwsRequest> reqLst = ae.getReqs();
         if (CollectionUtils.isNullOrEmpty(reqLst)) {
             return vmMap;
@@ -751,6 +769,9 @@ public class AwsUtil {
         }
 
         AwsEntity ae = AwsUtil.toObject(jf, AwsEntity.class);
+        if (ae == null) {
+            return onlineNum;
+        }
         List<AwsRequest> reqLst = ae.getReqs();
         if (CollectionUtils.isNullOrEmpty(reqLst)) {
             return onlineNum;
@@ -814,6 +835,9 @@ public class AwsUtil {
         }
 
         AwsEntity ae = AwsUtil.toObject(jf, AwsEntity.class);
+        if (ae == null) {
+            return null;
+        }
         List<AwsTemplate> tLst = ae.getTemplates();
         for (AwsTemplate at : tLst) {
             if (at.getTemplateId().equals(templateId)) {
@@ -921,7 +945,7 @@ public class AwsUtil {
         // SUP_BY_LSF issue#259 support CapacityOptimized
         // and change the default allocation strategy to CapacityOptimized if empty or invalid
         if (StringUtils.isNullOrEmpty(awsTemplate.getAllocationStrategy())) {
-        	awsTemplate.setAllocationStrategy(AllocationStrategy.CapacityOptimized.toString());
+            awsTemplate.setAllocationStrategy(AllocationStrategy.CapacityOptimized.toString());
         } else if (awsTemplate.getAllocationStrategy().equalsIgnoreCase(
                        AllocationStrategy.CapacityOptimized.toString())) {
             awsTemplate.setAllocationStrategy(AllocationStrategy.CapacityOptimized.toString());
