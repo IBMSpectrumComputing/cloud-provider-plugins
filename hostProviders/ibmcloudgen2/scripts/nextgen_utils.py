@@ -224,22 +224,16 @@ class RcInOut:
        fp = open(full_path, "r")
        if fp.mode == 'r':
           contents = fp.read()
-          try:
-            theJson = json.loads(contents)
-          except Exception as e:
+          theJson = self.loadFromFile(full_path, contents)
+          if theJson is None:
+            #rebuild the file
             fp.close()
-            logging.error("The content of the file <"+full_path+"> cannot be translated into a JSON object. " + repr(e))
-            if contents is None:
-              logging.debug("The content of the file <"+full_path+">: empty")
-            else:
-              logging.debug("The content of the file <"+full_path+">: "+contents)
-            logging.error("Delete the bad file <"+full_path+"> and rebuild it.")
-            os.remove(full_path)
             requestList.append(data)
             requestsObj['requests'] = requestList
             with open(full_path, 'w+') as outfile:
               json.dump(requestsObj, outfile, indent=2)
               outfile.close()
+            logging.debug("Rebuild file <"+full_path+"> success")
             return
  
           if "requests" in theJson:
@@ -274,7 +268,11 @@ class RcInOut:
        fp = open(full_path, "r")
        if fp.mode == 'r':
           contents = fp.read()
-          theJson = json.loads(contents)
+          theJson = self.loadFromFile(full_path, contents)
+          if theJson is None:
+            fp.close()
+            return
+
           if "requests" in theJson:
              for req in theJson['requests']:
                  if requestId == req['requestId']:
@@ -319,6 +317,19 @@ class RcInOut:
       if hasBkp:
         os.rename(full_path, fnameBkp)
         logging.error("Rollback json file <"+full_path+">.")
+
+  def loadFromFile(self, full_path, contents):
+    if contents is None or not contents:
+      logging.error("The file <" + full_path + "> is empty which cannot be parsed to json object, remove it.")
+      os.remove(full_path)
+      return None
+
+    try:
+      return  json.loads(contents)
+    except Exception as e:
+      logging.error("Parse json object from file <"+full_path+"> error. "+repr(e))
+      return None
+
  
   def getVmListFromFile(self, reqId):
     full_path = self.getFullPath(reqId)
@@ -330,7 +341,11 @@ class RcInOut:
     fp = open(full_path, "r")
     if fp.mode == 'r':
       contents = fp.read()
-      theJson = json.loads(contents)
+      theJson = self.loadFromFile(full_path, contents)
+      if theJson is None:
+          fp.close()
+          return templateId, instanceList, requestId
+
       if "requests" in theJson:
         for req in theJson['requests']:
           requestId = req['requestId']
@@ -355,7 +370,7 @@ class RcInOut:
       fp = open(full_path, "r")
       if fp.mode == 'r':
          contents = fp.read()
-         data = json.loads(contents)
+         data = self.loadFromFile(full_path, contents)
       fp.close()
       
       return data
@@ -371,7 +386,11 @@ class RcInOut:
     fp = open(full_path, "r")
     if fp.mode == 'r':
       contents = fp.read()
-      theJson = json.loads(contents)
+      theJson = self.loadFromFile(full_path, contents)
+      if theJson is None:
+        fp.close()
+        return instanceList
+
       if "machines" in theJson:
         for vm in theJson['machines']:
           rcInstance = RCInstance()
@@ -388,7 +407,11 @@ class RcInOut:
     fp = open(full_path, "r")
     if fp.mode == 'r':
       contents = fp.read()
-      theJson = json.loads(contents)
+      theJson = self.loadFromFile(full_path, contents)
+      if theJson is None:
+        fp.close()
+        return instanceList
+
       if "requests" in theJson:
          for req in theJson['requests']:
              templateId = ""
