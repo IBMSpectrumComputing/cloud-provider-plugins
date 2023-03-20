@@ -74,6 +74,11 @@ def NextGenVPCInit(_config, _template):
   if service is None:
     service = VpcV1.new_instance()
 
+  global regionToApiEndPoint
+  if len(_config.api_endpoints) > 0:
+    regionToApiEndPoint=_config.api_endpoints
+  logging.info("regionToApiEndPoint="+str(regionToApiEndPoint))
+
   if _template.region in regionToApiEndPoint:
     service.set_service_url(regionToApiEndPoint[_template.region])
   else:

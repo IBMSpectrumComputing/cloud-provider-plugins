@@ -74,6 +74,7 @@ class NextGenConfig:
     self.provision_file = ""
     self.vm_prefix = ""
     self.log_level = ""
+    self.api_endpoints = []
 
     theJson = json.loads(content)
     if "IBMCLOUDGEN2_KEY_FILE" in theJson:
@@ -87,6 +88,9 @@ class NextGenConfig:
 
     if "LogLevel" in theJson:
       self.log_level = theJson["LogLevel"]   
+
+    if "ApiEndPoints" in theJson:
+      self.api_endpoints = theJson["ApiEndPoints"]
 
   @property
   def key_file(self):
@@ -119,6 +123,21 @@ class NextGenConfig:
   @log_level.setter
   def log_level(self, value):
     self._log_level = value
+
+  @property
+  def api_endpoints(self):
+    return self._api_endpoints
+
+  @api_endpoints.setter
+  def api_endpoints(self, value):
+    self._api_endpoints = value
+
+  def __str__(self):
+    return "key_file: " + self.key_file + "\n" + \
+           "vm_prefix: " + self.vm_prefix + "\n" + \
+           "provision_file: " + self.provision_file + "\n" + \
+           "log_level: " + self.log_level  + "\n" + \
+           "api_endpoints: " +  str(self.api_endpoints)
 
   def __str__(self):
    return "api_key: " + self.api_key + "\n" + \
