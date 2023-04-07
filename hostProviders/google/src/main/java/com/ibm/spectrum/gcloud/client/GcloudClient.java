@@ -1417,7 +1417,7 @@ public class GcloudClient {
             log.trace("Start in class GcloudClient in method getCloudVMMap()");
         }
 
-        Map<String, Instance> vmMap = new HashMap<String, Instance>();
+        Map<String, Instance> vmMap = null;
         String projectId = GcloudUtil.getConfig().getProjectID();
 
         // Get instance list on cloud
@@ -1430,6 +1430,7 @@ public class GcloudClient {
 
         // Add these instances to vmMap
         if (CollectionUtils.isNotEmpty(instList)) {
+            vmMap =  new HashMap<String, Instance>();
             for (Instance inst : instList) {
                 vmMap.put(inst.getId().toString(), inst);
             }
