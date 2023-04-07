@@ -953,6 +953,10 @@ public class GcloudUtil {
 
     public static void dumpInstList(List<Instance> instList, String caller) {
         log.debug("Begin dumpInstList: " + caller);
+        if (instList == null || instList.isEmpty()) {
+        	log.debug("empty instList");
+        	return;
+        }
         for (Instance inst : instList) {
             log.debug("id:<" + inst.getId().toString() + "> name:<" + inst.getName() + " status:<" + inst.getStatus() + ">.");
         }
@@ -961,6 +965,11 @@ public class GcloudUtil {
 
     public static void dumpInstMap(Map<String, Instance> vmMap, String caller) {
         log.debug("Begin dumpInstMap: " + caller);
+        if (vmMap == null || vmMap.isEmpty()) {
+        	log.debug("empty vmMap");
+        	return;
+        }
+        
         for (Map.Entry<String, Instance> entry : vmMap.entrySet()) {
             String instId =  entry.getKey() ;
             Instance inst =  entry.getValue();
