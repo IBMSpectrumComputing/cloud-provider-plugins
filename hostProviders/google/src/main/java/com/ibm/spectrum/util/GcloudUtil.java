@@ -953,6 +953,10 @@ public class GcloudUtil {
 
     public static void dumpInstList(List<Instance> instList, String caller) {
         log.debug("Begin dumpInstList: " + caller);
+        if (instList == null || instList.isEmpty()) {
+        	log.debug("empty instList");
+        	return;
+        }
         for (Instance inst : instList) {
             log.debug("id:<" + inst.getId().toString() + "> name:<" + inst.getName() + " status:<" + inst.getStatus() + ">.");
         }
@@ -961,6 +965,11 @@ public class GcloudUtil {
 
     public static void dumpInstMap(Map<String, Instance> vmMap, String caller) {
         log.debug("Begin dumpInstMap: " + caller);
+        if (vmMap == null || vmMap.isEmpty()) {
+        	log.debug("empty vmMap");
+        	return;
+        }
+        
         for (Map.Entry<String, Instance> entry : vmMap.entrySet()) {
             String instId =  entry.getKey() ;
             Instance inst =  entry.getValue();
@@ -998,10 +1007,10 @@ public class GcloudUtil {
 		int connectTimeout = GcloudConst.DEFAULT_HTTP_CONNECT_TIMEOUT;
 
     	Integer configConnectTimeout = GcloudUtil.getConfig().getHttpConnectTimeout();
-		if (configConnectTimeout != null && configConnectTimeout.intValue() > 0 && configConnectTimeout.intValue() < 60) {
+		if (configConnectTimeout != null && configConnectTimeout.intValue() > 0) {
 			connectTimeout = configConnectTimeout.intValue();
 		} else if (configConnectTimeout != null) {
-			log.warn("HTTP_CONNECT_TIMEOUT must be greater than 0 and smaller than 60. Set default to " + connectTimeout);
+			log.warn("HTTP_CONNECT_TIMEOUT must be greater than 0 . Set default to " + connectTimeout);
 		}
 		
 		return connectTimeout;
@@ -1017,10 +1026,10 @@ public class GcloudUtil {
 		int readTimeout = GcloudConst.DEFAULT_HTTP_READ_TIMEOUT;
 		
 		Integer configReadTimeout = GcloudUtil.getConfig().getHttpReadTimeout();
-		if (configReadTimeout != null && configReadTimeout.intValue() > 0 && configReadTimeout.intValue() < 60) {
+		if (configReadTimeout != null && configReadTimeout.intValue() > 0) {
 			readTimeout = configReadTimeout.intValue();
 		} else if (configReadTimeout != null) {
-			log.warn("HTTP_READ_TIMEOUT must be greater than 0 and smaller than 60. Set default to " + readTimeout);
+			log.warn("HTTP_READ_TIMEOUT must be greater than 0. Set default to " + readTimeout);
 		}
 
 		return readTimeout;
