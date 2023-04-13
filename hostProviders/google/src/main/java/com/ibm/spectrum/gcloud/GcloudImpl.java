@@ -172,6 +172,15 @@ public class GcloudImpl implements IGcloud {
         // load information from DB and Google cloud
         GcloudEntity provisionStatusDB = GcloudUtil.getFromFile();
         Map<String, Instance> instances = GcloudClient.getCloudVMMap();
+        
+        /* lsf-L3-tracker#736 do not reclaim host if list all instances from cloud fail */
+        if (instances == null || instances.isEmpty()) {
+            rsp.setStatus(GcloudConst.EBROKERD_STATE_COMPLETE);
+            rsp.setReqs(gcloudRequestList);
+            rsp.setRsp(0, "Failed to list instances on Google Cloud");
+            log.warn("getReturnRequests failed because of failing to list instances on Google Cloud.");
+            return rsp; 
+        }
 
         List<GcloudRequest> requestsToBeChecked = new ArrayList<GcloudRequest>();
         if (provisionStatusDB != null && !CollectionUtils.isEmpty(provisionStatusDB.getReqs())) {
