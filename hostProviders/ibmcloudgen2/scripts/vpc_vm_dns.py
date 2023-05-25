@@ -121,7 +121,10 @@ def create_instance(rg, vpc, profile, zone, image, subnet, sgs, ssh_id, template
  
   # Construct a dict representation of a SubnetIdentityById model
   subnet_identity_model = {}
-  subnet_identity_model['id'] = subnet
+  if subnet[:3] == "crn":
+    subnet_identity_model['crn'] = subnet
+  else:
+    subnet_identity_model['id'] = subnet
 
   # Construct a dict representation of a ImageIdentityById model
   image_identity_model = {}
