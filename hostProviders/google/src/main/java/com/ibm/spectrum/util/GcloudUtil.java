@@ -1034,5 +1034,19 @@ public class GcloudUtil {
 
 		return readTimeout;
     }
+    
+    /**
+     * @Title: isAssignInstTemplateServiceAccount
+     * @Description: 
+     * @param 
+     * @return true if set ASSIGN_SERVICE_ACCOUNT_FROM_LAUNCH_TEMPLATE to true
+     */
+    public static boolean isAssignInstTemplateServiceAccount() {
+		if (Boolean.TRUE.equals(config.getAssignInstTemplateServiceAccount())) {
+			return true;
+		}
+
+		return false;
+    }
 
 }
