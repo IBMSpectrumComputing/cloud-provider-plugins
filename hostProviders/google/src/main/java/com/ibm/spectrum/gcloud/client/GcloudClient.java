@@ -152,6 +152,7 @@ public class GcloudClient {
                 InputStream jsonStream = new FileInputStream(credentialsFile);
                 credential = GoogleCredentials.fromStream(jsonStream);
             } else {
+                log.info("Get application default Service Account since cannot access credential file");
                 credential = GoogleCredentials.getApplicationDefault();
             }
             if (credential.createScopedRequired()) {
@@ -475,16 +476,38 @@ public class GcloudClient {
 
     /**
      *
-     * @Title: getServiceAccount
-     * @Description: Get service account setting
-     * @param t
+     * @Title: getInstanceServiceAccount
+     * @Description: Set service account that is assigned to bursted instances
+     * @param t: template
      * @param projectId
-     * @return
+     * @return   a) null, means that If "launchTemplateId" is defined in template, and ASSIGN_SERVICE_ACCOUNT_FROM_LAUNCH_TEMPLATE is set to true in config.json
+     *              Assign the "ServiceAccount" inside the "InstanceTemplate" to created instances.
+     *           b) "Default", assign "Default" Service Account to created instances, with permission compute and storage.
      */
-    public static ServiceAccount getServiceAccount(GcloudTemplate t, String projectId) {
+    public static ServiceAccount getInstanceServiceAccount(GcloudTemplate t, String projectId) {
         // Initialize the service account to be used by the VM Instance
         // and set the API access scopes.
+    	String launchTemplateId = t.getLaunchTemplateId();
+    	
+    	
+    	 // launchTempalteId is defined, and ASSIGN_SERVICE_ACCOUNT_FROM_LAUNCH_TEMPLATE is enabled
+        if (StringUtils.isNotEmpty(launchTemplateId) && 
+        		GcloudUtil.isAssignInstTemplateServiceAccount()) {
+        	 // launchTemplateId is defined, and serviceAccount is defined to "launcheTemplate"
+        	 // Do nothing, so that it use the "ServiceAccount" in launchTemplate
+        	log.debug("Use Service Account inside the Instance Template " + launchTemplateId);
+        	return null;
+        }
+        
         ServiceAccount account = new ServiceAccount();
+        if (StringUtils.isEmpty(launchTemplateId) && 
+        		GcloudUtil.isAssignInstTemplateServiceAccount()) {
+        	log.debug("ASSIGN_SERVICE_ACCOUNT_FROM_LAUNCH_TEMPLATE is enabled, but 'launchTemplateId' is not defined in template " 
+        		+ t.getTemplateId() + ", Use 'default' Service Account.");
+        } else {
+        	log.debug("Assign 'default' Service Account to created instances.");
+        }
+
         account.setEmail("default");
         List<String> scopes = new ArrayList<String>();
         scopes.add("https://www.googleapis.com/auth/devstorage.full_control");
@@ -492,6 +515,7 @@ public class GcloudClient {
         account.setScopes(scopes);
 
         return account;
+   
     }
 
 
@@ -573,8 +597,10 @@ public class GcloudClient {
 
         // Initialize the service account to be used by the VM Instance
         // and set the API access scopes.
-        ServiceAccount account = getServiceAccount(t, projectId);
-        instance.setServiceAccounts(Collections.singletonList(account));
+        ServiceAccount account = getInstanceServiceAccount(t, projectId);
+        if (account != null) {
+        	instance.setServiceAccounts(Collections.singletonList(account));
+        }
 
         // Optional - Add a startup script to be used by the VM
         // Instance.
@@ -643,8 +669,10 @@ public class GcloudClient {
 
         // Initialize the service account to be used by the VM Instance
         // and set the API access scopes.
-        ServiceAccount account = getServiceAccount(t, projectId);
-        instanceProperties.setServiceAccounts(Collections.singletonList(account));
+        ServiceAccount account = getInstanceServiceAccount(t, projectId);
+        if (account != null) {
+        	instanceProperties.setServiceAccounts(Collections.singletonList(account));
+        }
 
         // Optional - Add a startup script to be used by the VM
         // Instance.

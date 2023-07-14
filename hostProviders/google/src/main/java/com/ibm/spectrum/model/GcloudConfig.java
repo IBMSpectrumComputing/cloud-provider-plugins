@@ -77,6 +77,14 @@ public class GcloudConfig {
     @JsonInclude(Include.NON_NULL)
     private Integer httpReadTimeout;
  
+    /**
+     * Optional and type is boolean, specify the flag to true if want to assign the ServiceAccount inside InstanceTmplate to created instances
+     */
+    @JsonProperty("ASSIGN_SERVICE_ACCOUNT_FROM_LAUNCH_TEMPLATE")
+    @JsonInclude(Include.NON_NULL)
+    private Boolean assignInstTemplateServiceAccount;
+    
+ 
 	/**
     * <p>Title: </p>
     * <p>Description: </p>
@@ -84,7 +92,9 @@ public class GcloudConfig {
     public GcloudConfig() {
     }
 
-    /**
+
+
+	/**
     * <p>Title: </p>
     * <p>Description: </p>
     * @param t
@@ -202,6 +212,20 @@ public class GcloudConfig {
 	public void setHttpReadTimeout(Integer httpReadTimeout) {
 		this.httpReadTimeout = httpReadTimeout;
 	}
+	
+	/**
+	 * @return assignInstTemplateServiceAccount
+	 */	
+    public Boolean getAssignInstTemplateServiceAccount() {
+		return assignInstTemplateServiceAccount;
+	}
+
+    /**
+     * @param assignInstTemplateServiceAccount
+     */
+	public void setAssignInstTemplateServiceAccount(Boolean assignInstTemplateServiceAccount) {
+		this.assignInstTemplateServiceAccount = assignInstTemplateServiceAccount;
+	}
 
 
     /** (Non Javadoc)
@@ -228,6 +252,10 @@ public class GcloudConfig {
         if (bulkInsertEnabled != null) {
             builder.append(", bulkInsertEnabled=");
             builder.append(bulkInsertEnabled);
+        }
+        if (assignInstTemplateServiceAccount != null) {
+            builder.append(", assignInstTemplateServiceAccount=");
+            builder.append(assignInstTemplateServiceAccount);
         }
         builder.append("]");
         return builder.toString();
