@@ -270,6 +270,7 @@ public class GcloudImpl implements IGcloud {
                 if (CollectionUtils.isEmpty(mList)) {
                     if (GcloudUtil.isBulkRequest(requestInDB.getHostAllocationType())) {
                         GcloudClient.updateBulkVMList(requestInDB, rsp);
+                        log.debug("Bulk request status: " + requestInDB);
                         if (requestInDB.getStatus() != null
                                 && (requestInDB.getStatus().equals(GcloudConst.EBROKERD_STATE_COMPLETE)
                                     || requestInDB.getStatus().equals(GcloudConst.EBROKERD_STATE_COMPLETE_WITH_ERROR))
@@ -656,7 +657,7 @@ public class GcloudImpl implements IGcloud {
             if (GcloudUtil.isBulkRequest(fReq.getHostAllocationType())
                     && statusUpdateForCreateMachine) {
                 vmMap = GcloudClient.updateBulkVMList(fReq, rsp);
-                if (vmMap == null) {
+                if (vmMap == null || vmMap.isEmpty()) {
                     return;
                 }
                 machinesListInDB = fReq.getMachines();
