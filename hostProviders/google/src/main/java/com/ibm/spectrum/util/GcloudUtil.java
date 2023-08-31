@@ -683,6 +683,7 @@ public class GcloudUtil {
             }
         }
 
+        log.warn("Failed to getTemplateFromFile " + templateId);
         return null;
     }
 
