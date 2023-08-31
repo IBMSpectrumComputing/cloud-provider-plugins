@@ -871,7 +871,7 @@ public class GcloudImpl implements IGcloud {
                         if (matchingMachine != null) {
                             log.trace("Value of machine in updateVm before updating attributes: " + machineInDB);
                             machineInDB.copyValues(matchingMachine);
-                            log.trace("Value of machine in updateVm before updating attributes: " + machineInDB);
+                            log.trace("Value of machine in updateVm after updating attributes: " + machineInDB);
                             // Remove the current machine from the update
                             // machine list since its values are copied to the
                             // DB object
