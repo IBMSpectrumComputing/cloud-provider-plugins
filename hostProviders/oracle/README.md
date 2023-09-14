@@ -1,1 +1,1 @@
-This is the Oracle Cloud plugin
+This is the Oracle Cloud plugin.
