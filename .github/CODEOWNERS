@@ -12,10 +12,8 @@
 # This should make it easy to add new rules without breaking existing ones.
 
 # Global rule:
-*           @zhchgbj
+*           @zhchgbj @JishanXing @liyancn @nanguanqi @yuch7 @qi622 @IBM-TYan
 
-# Openstack plugin:
-/hostProviders/openstack/  @JishanXing
 
 # Oracle plugin:
 /hostProviders/oracle/  @JishanXing
