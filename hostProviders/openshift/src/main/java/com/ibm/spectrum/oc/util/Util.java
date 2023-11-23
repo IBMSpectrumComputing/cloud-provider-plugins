@@ -1203,7 +1203,7 @@ public class Util {
             machineStatus = statusData.getPhase();
             msg = statusData.getMessage();
             if (statusData.getStartTime() != null) {
-                creationTime = statusData.getStartTime().getMillis() / 1000;
+                creationTime = statusData.getStartTime().toEpochSecond();
             }
         }
 
