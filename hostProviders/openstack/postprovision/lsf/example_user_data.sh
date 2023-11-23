@@ -10,27 +10,6 @@ echo START AT `date '+%Y-%m-%d %H:%M:%S'` >> $logfile
 %EXPORT_USER_DATA%
 
 #
-# Update sudoer file for Centos 6. Centos 7 does not need this step.
-#
-if [ -e /etc/redhat-release ]; then
-    rel_string=$(cat /etc/redhat-release)
-    if [[ $rel_string == "CentOS release 6"* ]]; then
-        if [ ! -f /etc/sudoers.d/90-cloud-init-users ]; then
-        (
-                cat <<EOF
-# User rules for centos
-centos ALL=(ALL) NOPASSWD:ALL
-EOF
-        ) > /etc/sudoers.d/90-cloud-init-users
-                chmod 440 /etc/sudoers.d/90-cloud-init-users
-        else
-                echo "/etc/sudoers.d/90-cloud-init-users exists" >> $logfile
-                cat /etc/sudoers.d/90-cloud-init-users >> $logfile 
-        fi
-    fi
-fi
-
-#
 # Run the script, which is defined with the "UserScript" attribute in 
 # the template
 #

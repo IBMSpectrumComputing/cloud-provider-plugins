@@ -10,13 +10,13 @@
         "mem": ["Numeric", "8192"],
         "nextgenhost": ["Boolean", "1"]
     },
-    "imageId": "r006-931515d2-fcc3-11e9-896d-3baa2797200f",
-    "subnetId": "0717-a16bb490-c5ab-4fa3-bf18-0298694df8c6",
-    "vpcId": "r006-e5c03fe9-42db-4995-bff9-7b7cfbbec7e9",
-    "resourceGroupId": "0d4b98578d5a474489b928cae03767d0",
+    "imageId": "xxxx-xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxx",
+    "subnetId": "xxxx-xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxx",
+    "vpcId": "xxxx-xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxx",
+    "resourceGroupId": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
     "vmType": "bx2-8x32",
-    "securityGroupIds": ["r006-e2a0df77-5efc-4da3-932f-d30aa9c1cdd2"],
-    "sshkey_id": "r006-73ace4ad-7fc2-4ee9-b00e-066f563e4833",
+    "securityGroupIds": ["xxxx-xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxx"],
+    "sshkey_id": "xxxx-xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxx",
     "region": "us-south",
     "zone": "us-south-1"
 }
