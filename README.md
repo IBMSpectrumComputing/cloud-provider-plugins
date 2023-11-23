@@ -117,7 +117,7 @@ The following is an example of JSON output to stdout:
 ```
 {
     "message":"RequestVM succeeded from Azure.",
-    "requestId":"c95595c4-0c07-4eb2-8c0c-94f364ac8e76"
+    "requestId":"xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
 }
 ```
 
@@ -130,7 +130,7 @@ The following is an example of content of an input JSON file:
     "machines":[
         {
             "name":"host-10-1-1-36",
-            "machineId":"4fa69d720e06c50a89fb"
+            "machineId":"xxxxxxxxxxxxxxxxxxxx"
         }
     ]
 }
@@ -140,7 +140,7 @@ The following is an example of example JSON output to stdout:
 ```
 {
     "message":"Request to terminate instances successful.",
-    "requestId":"5f6a3f07-840e-4fa6-9d72-0e06c50a89fb"
+    "requestId":"xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
 }
 ```
 
@@ -152,7 +152,7 @@ The following is an example of the content of an input JSON file:
 {
     "requests":[
         {
-            "requestId":"7de9425e-6be8-4e50-8dc7-dbcab7ec3102"
+            "requestId":"xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
         }
     ]
 }
@@ -166,7 +166,7 @@ The following is an example of JSON output to stdout:
             "status":"complete",
             "machines":[
                 {
-                    "machineId":"4e508dc7dbcab7ec3102",
+                    "machineId":"xxxxxxxxxxxxxxxxxxxx",
                     "name":"host-10-100-2-118",
                     "result":"succeed",
                     "status":"RUNNING",
@@ -176,7 +176,7 @@ The following is an example of JSON output to stdout:
                     "launchtime":1494001568
                 }
             ],
-            "requestId":"7de9425e-6be8-4e50-8dc7-dbcab7ec3102",
+            "requestId":"xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
             "message":""
         }
     ]
@@ -202,11 +202,11 @@ The following is an example of the content of an input JSON file:
     "machines":[
         {
             "name":"host-10-1-1-36",
-            "machineId":"4fa69d720e06c50a89fb"
+            "machineId":"xxxxxxxxxxxxxxxxxxxx"
         },
         {
             "name":"host-10-1-1-37",
-            "machineId":"9fas9d720e06c50a782b"
+            "machineId":"xxxxxxxxxxxxxxxxxxxx"
         }
     ]
 }
@@ -218,7 +218,7 @@ The following is an example of JSON output to stdout if the cloud terminated any
     "requests":[
         {
             "machine":"host-10-1-1-36",
-            "machineId":"4fa69d720e06c50a89fb"
+            "machineId":"xxxxxxxxxxxxxxxxxxxx"
         }
     ]
 }
