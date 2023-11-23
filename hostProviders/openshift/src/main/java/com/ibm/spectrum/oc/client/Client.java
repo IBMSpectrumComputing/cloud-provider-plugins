@@ -321,6 +321,7 @@ public class Client {
             String pretty = null;
             String dryRun = null;
             String fieldManager = null;
+            String fieldValidation = null;
 
             V1ResourceRequirements res = new V1ResourceRequirements();
             Map<String, Quantity> limits = new HashMap<String, Quantity>();
@@ -492,7 +493,7 @@ public class Client {
             body.setKind(Util.OPENSHIFT_API_KIND_POD);
             body.setMetadata(meta);
             body.setSpec(spec);
-            pod = api.createNamespacedPod(namespace, body, pretty, dryRun, fieldManager);
+            pod = api.createNamespacedPod(namespace, body, pretty, dryRun, fieldManager, fieldValidation);
             if (pod != null) {
                 log.info("End in class Client in method create a Pod: " + pod.getMetadata().getName());
                 if (log.isTraceEnabled()) {
@@ -551,8 +552,9 @@ public class Client {
                 Integer timeoutSeconds = null;
                 Boolean watch = null;
                 String resourceVersion = null; // Util.OPENSHIFT_API_VERSION;
-                V1PodList podlist = api.listNamespacedPod(namespace, pretty, allowWatchBookmarks, _continue, fieldSelector, labelSelector, limit, resourceVersion, timeoutSeconds, watch);
-                if (podlist != null) {
+                String resourceVersionMatch = null;
+                V1PodList podlist = api.listNamespacedPod(namespace, pretty, allowWatchBookmarks, _continue, fieldSelector, labelSelector, limit, resourceVersion, resourceVersionMatch, timeoutSeconds, watch);
+                 if (podlist != null) {
                     pList = podlist.getItems();
                 }
             } catch (Exception e) {
@@ -609,11 +611,12 @@ public class Client {
         String pretty = null;
         String dryRun = null;
         String fieldManager = null;
+        String fieldValidation = null;
         Boolean force = null;
         String content = String.format("[{\"op\": \"add\", \"path\": \"/metadata/labels/%s\", \"value\": \"%s\"}]", labelKey, labelVal);
         V1Patch body = new V1Patch(content);
         try {
-            api.patchNamespacedPod(podName, namespace, body, pretty, dryRun, fieldManager, force);
+            api.patchNamespacedPod(podName, namespace, body, pretty, dryRun, fieldManager, fieldValidation, force);
         } catch (Exception e) {
             log.error(e);
             e.printStackTrace();
@@ -684,7 +687,8 @@ public class Client {
             Integer timeoutSeconds = null;
             Boolean watch = null;
             String resourceVersion = null; // Util.OPENSHIFT_API_VERSION;
-            V1PodList list = api.listNamespacedPod(namespace, pretty, allowWatchBookmarks, _continue, fieldSelector, labelSelector, limit, resourceVersion, timeoutSeconds, watch);
+            String resourceVersionMatch = null;
+            V1PodList list = api.listNamespacedPod(namespace, pretty, allowWatchBookmarks, _continue, fieldSelector, labelSelector, limit, resourceVersion, resourceVersionMatch, timeoutSeconds, watch);
 
             if (list != null) {
                 pods = 	list.getItems();
@@ -736,13 +740,14 @@ public class Client {
         Integer timeoutSeconds= null;
         Boolean watch = null;
         String resourceVersion = null; // Util.OPENSHIFT_API_VERSION;
+        String resourceVersionMatch = null;
         try {
             if (sb.length() > 0) {
                 labelSelector = sb.toString();
             }
             list = api.listNamespacedPersistentVolumeClaim(
                        namespace, pretty, allowWatchBookmarks, _continue,
-                       fieldSelector, labelSelector, limit, resourceVersion,
+                       fieldSelector, labelSelector, limit, resourceVersion, resourceVersionMatch,
                        timeoutSeconds, watch);
             if (log.isTraceEnabled()) {
                 log.trace("PersistentVolumeClaims " + list);
@@ -778,11 +783,12 @@ public class Client {
         Integer timeoutSeconds= null;
         Boolean watch = null;
         String resourceVersion = null; // Util.OPENSHIFT_API_VERSION;
+        String resourceVersionMatch = null;
         try {
             if (sb.length() > 0) {
                 labelSelector = sb.toString();
             }
-            list = api.listNamespacedSecret(namespace, pretty, allowWatchBookmarks, _continue, fieldSelector, labelSelector, limit, resourceVersion, timeoutSeconds, watch);
+            list = api.listNamespacedSecret(namespace, pretty, allowWatchBookmarks, _continue, fieldSelector, labelSelector, limit, resourceVersion, resourceVersionMatch, timeoutSeconds, watch);
             if (log.isTraceEnabled()) {
                 log.trace("secrets " + list);
             }
@@ -817,11 +823,12 @@ public class Client {
         Integer timeoutSeconds= null;
         Boolean watch = null;
         String resourceVersion = null; // Util.OPENSHIFT_API_VERSION;
+        String resourceVersionMatch= null;
         try {
             if (sb.length() > 0) {
                 labelSelector = sb.toString();
             }
-            list = api.listNamespacedConfigMap(namespace, pretty, allowWatchBookmarks, _continue, fieldSelector, labelSelector, limit, resourceVersion, timeoutSeconds, watch);
+            list = api.listNamespacedConfigMap(namespace, pretty, allowWatchBookmarks, _continue, fieldSelector, labelSelector, limit, resourceVersion, resourceVersionMatch, timeoutSeconds, watch);
             if (log.isTraceEnabled()) {
                 log.trace("ConfigMaps " + list);
             }
