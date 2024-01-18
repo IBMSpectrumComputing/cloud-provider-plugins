@@ -39,8 +39,6 @@ fi
 #
 LSF_TOP=/opt/lsf
 LSF_CONF_FILE=$LSF_TOP/conf/lsf.conf
-. $LSF_TOP/conf/profile.lsf
-env >> $logfile
 
 # 
 # Support rc_account resource to enable RC_ACCOUNT policy  
@@ -69,9 +67,14 @@ if [ -n "$clustername" ]; then
 sed -i "s/\(LSF_LOCAL_RESOURCES=.*\)\"/\1 [resourcemap $clustername*clusterName]\"/" $LSF_CONF_FILE
 fi
 
+# Install LSF as a service and startup
+${LSF_TOP}/10.1/install/hostsetup --top="/opt/zhchgbj/lsf10.1" --boot="y" --start="y" --dynamic 2>&1 >> $logfile
+systemctl status lsfd >> $logfile
+
 #
 # Start LSF Daemons 
-#
-$LSF_SERVERDIR/lsf_daemons start
+#. $LSF_TOP/conf/profile.lsf
+#env >> $logfile
+#$LSF_SERVERDIR/lsf_daemons start
 
 echo END AT `date '+%Y-%m-%d %H:%M:%S'` >> $logfile

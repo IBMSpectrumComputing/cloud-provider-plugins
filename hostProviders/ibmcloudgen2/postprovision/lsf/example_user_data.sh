@@ -9,8 +9,6 @@ echo START `date '+%Y-%m-%d %H:%M:%S'` >> $logfile
 #
 %EXPORT_USER_DATA%
 
-env >> $logfile
-
 #
 # Add your customization script here
 #
@@ -38,8 +36,6 @@ cp /etc/hosts /tmp/
 #
 LSF_TOP=/opt/lsf_dynamic_host
 LSF_CONF_FILE=$LSF_TOP/conf/lsf.conf
-. $LSF_TOP/conf/profile.lsf
-env >> $logfile
 
 #update lim port
 #sed -i "s/LSF_LIM_PORT=7869/LSF_LIM_PORT=17869/" $LSF_CONF_FILE
@@ -99,9 +95,16 @@ fi
 #echo "providerName doesn't exist in envrionment variable" >> $logfile
 #fi
 
+# Install LSF as a service and start up
+${LSF_TOP}/10.1/install/hostsetup --top="${LSF_TOP}" --boot="y" --start="y" --dynamic 2>&1 >> $logfile
+systemctl status lsfd >> $logfile
 
-nohup lsf_daemons start &
-
-lsf_daemons status >> $logfile
+# Start up LSF
+#LSF_TOP will get lost after you source profile.lsf
+#. $LSF_TOP/conf/profile.lsf
+#env >> $logfile
+#nohup lsf_daemons start &
+#
+#lsf_daemons status >> $logfile
 echo END `date '+%Y-%m-%d %H:%M:%S'` >> $logfile
 
