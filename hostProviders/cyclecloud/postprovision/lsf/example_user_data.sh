@@ -18,12 +18,6 @@ LOG_FILE=/tmp/user-data.log
 echo Start at `date '+%Y-%m-%d %H:%M:%S'` > $LOG_FILE 2>&1
 
 #
-# Source LSF enviornment on the VM host
-#
-source $LSF_TOP/conf/profile.lsf
-env >> $LOG_FILE
-
-#
 # Support rc_account resource to enable RC_ACCOUNT policy
 # Set rc_account to the file lsf.conf
 #
@@ -90,8 +84,17 @@ fi
 #
 # Start LSF Daemons
 #
-lsadmin limstartup
-lsadmin resstartup
-badmin hstartup
+# Install LSF as a service and start up
+${LSF_TOP}/10.1/install/hostsetup --top="${LSF_TOP}" --boot="y" --start="y" --dynamic  2>&1 >> $logfile
+systemctl status lsfd >> $logfile
+
+# Source LSF enviornment on the VM host
+#source $LSF_TOP/conf/profile.lsf
+#env >> $LOG_FILE
+#
+#lsadmin limstartup
+#lsadmin resstartup
+#badmin hstartup
+
 
 echo End at `date '+%Y-%m-%d %H:%M:%S'` >> $LOG_FILE 2>&1

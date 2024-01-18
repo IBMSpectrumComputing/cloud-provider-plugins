@@ -18,8 +18,6 @@ echo START `date '+%Y-%m-%d %H:%M:%S'` >> $logfile
 #
 LSF_TOP=/opt/lsf
 LSF_CONF_FILE=$LSF_TOP/conf/lsf.conf
-. $LSF_TOP/conf/profile.lsf
-env >> $logfile
 
 # 
 # Support rc_account resource to enable RC_ACCOUNT policy  
@@ -57,9 +55,16 @@ fi
 #echo "lsfdev1.test.com" > $LSF_ENVDIR/hostregsetup
 #lsreghost -s $LSF_ENVDIR/hostregsetup
 
+
+# Install LSF as a service and start up
+${LSF_TOP}/10.1/install/hostsetup --top="${LSF_TOP}" --boot="y" --start="y" --dynamic 2>&1 >> $logfile
+systemctl status lsfd >> $logfile
+
+# Start up LSF
 #
-# Start LSF Daemons 
+#. $LSF_TOP/conf/profile.lsf
+#env >> $logfile
 #
-$LSF_SERVERDIR/lsf_daemons start
+#$LSF_SERVERDIR/lsf_daemons start
 
 echo END AT `date '+%Y-%m-%d %H:%M:%S'` >> $logfile
