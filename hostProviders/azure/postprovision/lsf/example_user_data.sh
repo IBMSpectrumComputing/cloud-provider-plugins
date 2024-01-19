@@ -4,12 +4,10 @@ echo START >> /var/log/user-data.log 2>&1
 # run hostsetup
 LSF_TOP=/usr/local/lsf
 LSF_CONF_FILE=$LSF_TOP/conf/lsf.conf
-source $LSF_TOP/conf/profile.lsf
 
 # run user script to enable selecting template based on zone
 
 logfile=/tmp/userscript.log
-env > $logfile
 if [ -n "${rc_account}" ]; then
 sed -i "s/\(LSF_LOCAL_RESOURCES=.*\)\"/\1 [resourcemap ${rc_account}*rc_account]\"/" $LSF_CONF_FILE
 echo "update LSF_LOCAL_RESOURCES lsf.conf successfully, add [resourcemap ${rc_account}*rc_account]" >> $logfile
@@ -44,10 +42,15 @@ fi
 #        echo "10.1.1.${i} host-10-1-1-${i} host-10-1-1-${i}.l4bujz2d1erudmtehqszuf5ugg.ix.internal.cloudapp.net" >> /etc/hosts
 #done
 
+# Install LSF as a service and start up
+${LSF_TOP}/10.1/install/hostsetup --top="${LSF_TOP}" --boot="y" --start="y" --dynamic 2>&1 >> $logfile
+systemctl status lsfd >> $logfile
 
-lsadmin limstartup
-lsadmin resstartup
-badmin hstartup
-
+# Start LSF Daemons
+#source $LSF_TOP/conf/profile.lsf
+#env > $logfile
+#lsadmin limstartup
+#lsadmin resstartup
+#badmin hstartup
 
 echo END >> /var/log/user-data.log 2>&1
