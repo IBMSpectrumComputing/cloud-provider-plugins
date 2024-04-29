@@ -6,7 +6,7 @@ _repoTopDir=$(cd "$(dirname "$0")";pwd)
 _num_of_opts="$#"
 _cmd_opt_str="$@"
 
-RC_JAVA_PLUGINS="aws azure cyclecloud google openshift"
+RC_JAVA_PLUGINS="aws azure cyclecloud google"
 RC_SCRIPT_PLUGINS="ibmcloudgen2 openstack"
 ALL_RC_PLUGSIN="$RC_JAVA_PLUGINS $RC_SCRIPT_PLUGINS"
 #RC_TARGET_FILE="brel_root.rc_plugin.tar.gz"
@@ -133,9 +133,6 @@ build_rc ()
     cd $_repoTopDir
 
     # copy specificial files
-    # copy "openshift/helpers" directory 
-    cp -rf $_repoTopDir/hostProviders/openshift/helpers $_repoTopDir/resource_connector/openshift
-    chmod 644 $_repoTopDir/resource_connector/openshift/helpers/*
     cp -rf $_repoTopDir/hostProviders/example_hostProviders.json $_repoTopDir/resource_connector/
     cp -rf $_repoTopDir/policy $_repoTopDir/resource_connector/
     mv $_repoTopDir/resource_connector/policy/example_policy_config.json $_repoTopDir/resource_connector
