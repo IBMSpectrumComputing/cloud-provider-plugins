@@ -35,12 +35,6 @@
             "type": "ibmcloudgen2Prov",
             "confPath": "resource_connector/ibmcloudgen2",
             "scriptPath": "resource_connector/ibmcloudgen2"
-        },
-        {
-            "name": "openshift",
-            "type": "openshiftProv",
-            "confPath": "resource_connector/openshift",
-            "scriptPath": "resource_connector/openshift"
         }
     ]
 }
