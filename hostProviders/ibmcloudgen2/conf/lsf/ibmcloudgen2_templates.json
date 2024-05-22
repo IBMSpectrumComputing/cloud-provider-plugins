@@ -15,6 +15,7 @@
     "vpcId": "xxxx-xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxx",
     "resourceGroupId": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
     "vmType": "bx2-8x32",
+    "computeUnit": "encl1",
     "securityGroupIds": ["xxxx-xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxx"],
     "sshkey_id": "xxxx-xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxx",
     "region": "us-south",

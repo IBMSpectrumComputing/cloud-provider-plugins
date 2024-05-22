@@ -159,6 +159,7 @@ class NextGenTemplate:
     self.zone = ""
     self.maxNumber = 0
     self.userData = ""
+    self.computeUnit = ""
 
     theJson = json.loads(content)
     if "templates" not in theJson: return
@@ -188,6 +189,9 @@ class NextGenTemplate:
           self.zone = template["zone"]
         if "userData" in template:
           self.userData = template["userData"]
+        if "computeUnit" in template:
+          self.computeUnit = template["computeUnit"]
+
 
   @property
   def maxNumber(self):
@@ -273,6 +277,13 @@ class NextGenTemplate:
   def userData(self, value):
     self._userData = value
 
+  @property
+  def computeUnit(self):
+    return self._computeUnit
+  @computeUnit.setter
+  def computeUnit(self, value):
+    self._computeUnit = value
+
   def __str__(self):
    return "imageId: " + self.imageId + "\n" + \
           "templateId: " + self.templateId + "\n" + \
@@ -280,6 +291,7 @@ class NextGenTemplate:
           "vpcId: " + self.vpcId + "\n" + \
           "rgId: " + self.rgId + "\n" + \
           "vmType: " + self.vmType + "\n" + \
+          "computeUnit: " + self.computeUnit + "\n" + \
           "securityGroupId: " + ", ".join(self.securityGroupId) + "\n" + \
           "sshkey_id: " + self.sshkey_id + "\n" + \
           "region: " + self.region + "\n" + \

@@ -209,17 +209,22 @@ public class AwsTemplate {
     @JsonProperty("fleetType")
     @JsonInclude(Include.NON_NULL)
     private String fleetType;
-    
 
-	/**
+    /**
+     * Optional. Template belongs to a computeUnit
+     */
+    @JsonProperty("computeUnit")
+    @JsonInclude(Include.NON_NULL)
+    private String computeUnit;
+
+    /**
      * Optional. Indicates the ratio between on-demand and spot target capacity.
      */
     @JsonProperty("onDemandTargetCapacityRatio")
     @JsonInclude(Include.NON_NULL)
     private Double onDemandTargetCapacityRatio;
 
-
-	/**
+    /**
      * <p>Title: </p>
      * <p>Description: </p>
      */
@@ -253,6 +258,7 @@ public class AwsTemplate {
         this.launchTemplateVersion = t.getLaunchTemplateVersion();
         this.marketSpotPrice = t.getMarketSpotPrice();
         this.ec2FleetConfig = t.getEc2FleetConfig();
+        this.computeUnit = t.getComputeUnit();
         this.onDemandTargetCapacityRatio = t.getOnDemandTargetCapacityRatio();
     }
 
@@ -621,6 +627,8 @@ public class AwsTemplate {
         builder.append(this.ec2FleetConfig);
         builder.append(", fleetType=");
         builder.append(this.fleetType);
+        builder.append(", computeUnit=");
+        builder.append(this.computeUnit);
         builder.append(", onDemandTargetCapacityRatio=");
         builder.append(this.onDemandTargetCapacityRatio);
         builder.append("]");
@@ -690,28 +698,29 @@ public class AwsTemplate {
     public void setMarketSpotPrice(Double marketSpotPrice) {
         this.marketSpotPrice = marketSpotPrice;
     }
-    
-    public String getEc2FleetConfig() {
-		return ec2FleetConfig;
-	}
 
-	public void setEc2FleetConfig(String ec2FleetConfig) {
-		this.ec2FleetConfig = ec2FleetConfig;
-	}
-    
-    public String getFleetType() {
-		return fleetType;
-	}
+    public String getEc2FleetConfig() { return ec2FleetConfig; }
 
-	public void setFleetType(String fleetType) {
-		this.fleetType = fleetType;
-	}
+    public void setEc2FleetConfig(String ec2FleetConfig) {
+        this.ec2FleetConfig = ec2FleetConfig;
+    }
 
-	public Double getOnDemandTargetCapacityRatio() {
-		return onDemandTargetCapacityRatio;
-	}
+    public String getComputeUnit() { return computeUnit; }
 
-	public void setOnDemandTargetCapacityRatio(Double onDemandTargetCapacityRatio) {
-		this.onDemandTargetCapacityRatio = onDemandTargetCapacityRatio;
-	}
+    public void setComputeUnit(String computeUnit) {
+        this.computeUnit = computeUnit;
+    }
+
+    public String getFleetType() { return fleetType; }
+
+    public void setFleetType(String fleetType) { this.fleetType = fleetType; }
+
+    public Double getOnDemandTargetCapacityRatio() {
+        return onDemandTargetCapacityRatio;
+    }
+
+    public void
+    setOnDemandTargetCapacityRatio(Double onDemandTargetCapacityRatio) {
+        this.onDemandTargetCapacityRatio = onDemandTargetCapacityRatio;
+    }
 }
