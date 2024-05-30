@@ -70,7 +70,7 @@ public class AwsConst {
 
     public static List<String> markedForTerminationStates = Arrays.asList(
                 new String[] { "marked-for-termination", "instance-terminated-no-capacity", "instance-terminated-by-price",
-                               "instance-terminated-by-schedule", "instance-terminated-by-service"
+                               "instance-terminated-by-schedule", "instance-terminated-by-service", "instance-terminated-by-experiment"
                              });
 
 }
