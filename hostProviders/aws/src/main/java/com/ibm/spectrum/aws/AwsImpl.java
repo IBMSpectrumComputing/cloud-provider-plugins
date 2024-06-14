@@ -790,6 +790,8 @@ public class AwsImpl implements IAws {
         AwsTemplate usedTemplate = AwsUtil.getTemplateFromFile(fReq.getTemplateId());
         List<String> vmIdLst = new ArrayList<String>();
         List<AwsMachine> newlyCreatedMachines = new ArrayList<AwsMachine>();
+        List<Instance> postCreationInstList = new ArrayList<Instance>();
+
         inReq.setReqId(fReq.getReqId());
         String latestRequestStatus = AwsConst.EBROKERD_STATE_COMPLETE;
         // If this is a Spot Fleet Request and the request update is for a create request, call the Spot Fleet APIs to update the status
@@ -915,8 +917,9 @@ public class AwsImpl implements IAws {
 
             //If the machine's status changed to running, apply the post creation behavior
             if("running".equalsIgnoreCase(latestMachineStatus) && !latestMachineStatus.equalsIgnoreCase(tempMachineOldStatus)) {
-                log.debug("[Instance - " + inReq.getReqId() + " - " + tempMachineInDB.getReqId() + " - " + tempMachineInDB.getMachineId() +"] Machine is successfully initiated. Running the post creation flow...");
-                AWSClient.applyPostCreationBehaviorForInstance(fReq, correspondingInstanceForTempMachineInDB, usedTemplate);
+                log.debug("[Instance - " + inReq.getReqId() + " - " + tempMachineInDB.getReqId() + " - " + tempMachineInDB.getMachineId()
+                           +"] Machine is successfully initiated. Ready for post creation behavior..");
+                postCreationInstList.add(correspondingInstanceForTempMachineInDB);
             }
             tempMachineInDB.setStatus(latestMachineStatus);
             tempMachineInDB.setPublicIpAddress(correspondingInstanceForTempMachineInDB.getPublicIpAddress());
@@ -930,6 +933,10 @@ public class AwsImpl implements IAws {
 
         }
 
+        if (! CollectionUtils.isNullOrEmpty(postCreationInstList)) {
+            AWSClient.applyPostCreationBehaviorForInstanceList(fReq, postCreationInstList, usedTemplate);
+            log.debug("[ Running the post creation flow for instances:" + postCreationInstList.toString());
+        }
         // 'running','complete','complete_with_error'
         log.debug("Setting the machine list to the response: " + machinesListInDB);
         inReq.setMachines(machinesListInDB);

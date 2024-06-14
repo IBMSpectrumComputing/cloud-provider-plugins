@@ -715,6 +715,51 @@ public class AWSClient {
 
     }
 
+    /**
+     * Retrieves the list of tags that are needed to be attached to the
+     * instance, EBS volumes, .... <br>
+     * The default tags to be created are: <br>
+     * - Key: RC_ACCOUNT ; Value: {accountTagValue}
+     *
+     * Additional tags can be provided in the {additionalInstanceTags} parameter
+     * in the following format: {Key1=Value1;Key2=Value2}
+     *
+     * @param instanceTags
+     *            instanceTag defined in LSF template
+     * @param accountTagValue
+     *            The value of the RC_ACCOUNT tag
+     */
+    private static List<Tag> createTagsForInstanceCreation(
+        String instanceTags,
+        String accountTagValue) {
+        if (log.isTraceEnabled()) {
+            log.trace("Start in class AWSClient in method createTagsForInstanceCreation with parameters:"
+                      + "instanceTags: "
+                      + instanceTags
+                      + ", accountTagValue: "
+                      + accountTagValue);
+        }
+
+        // First create tag based on LSF template instanceTags
+        List<Tag> tags = createInstanceTags(instanceTags);
+
+        try {
+            Tag tag = null;
+            if (!StringUtils.isNullOrEmpty(accountTagValue)) {
+                tag = new Tag("RC_ACCOUNT", accountTagValue);
+                tags.add(tag);
+            }
+
+        } catch (Exception e) {
+            log.error("Create tag failed for accountTagValue: " + accountTagValue
+                      + " ] with the following error: " + e.getMessage(), e);
+        }
+
+        if (log.isTraceEnabled()) {
+            log.trace("End in class AWSClient in method createTagsForInstanceCreation with return: tags: " + tags);
+        }
+        return tags;
+    }
 
     /**
      * Retrieves the list of tags that are needed to be attached to the
@@ -752,8 +797,6 @@ public class AWSClient {
         if (instance != null) {
             String instanceId = instance.getInstanceId();
             try {
-                String[] instanceTagStr = null;
-
                 Tag tag = null;
                 if (!StringUtils.isNullOrEmpty(accountTagValue)) {
                     tag = new Tag("RC_ACCOUNT", accountTagValue);
@@ -1364,6 +1407,102 @@ public class AWSClient {
     }
 
 
+    /**
+    *
+    * @Title: tagResources
+    * @Description: tag a list of resourceIds.
+    *         If resources number exceed 500, it will break into several request each with 500 resources.
+    * @param @param resourceIds,tagValue
+    * @param @return
+    * @return void
+    * @throws
+    */
+    public static void tagResources(List<String> resourceIdList,  List<Tag> tagsToBeCreated) {
+        if (log.isTraceEnabled()) {
+            log.trace("Start in class AWSClient in method tagEbsVolumes with parameters: resourceIdList: " + resourceIdList + ", tagsToBeCreated: "
+                      + tagsToBeCreated);
+        }
+
+        if (CollectionUtils.isNullOrEmpty(resourceIdList)) {
+            return;
+        }
+
+        try {
+            /* Refer: https://docs.aws.amazon.com/AWSJavaSDK/latest/javadoc/com/amazonaws/services/ec2/model/CreateTagsRequest.html
+             * CreateTagsRequest:
+             * Constraints: Up to 1000 resource IDs. We recommend breaking up this request into smaller batches.
+            */
+            int MX_RESOURCES_NUM = 500;
+
+            log.trace("Creating tags with resource IDs: " + resourceIdList.toString());
+            log.trace("Creating the following tags: " + tagsToBeCreated);
+
+            List<String> resourceIdsInLoop = new ArrayList<String>();
+            for (String resourceId: resourceIdList) {
+                resourceIdsInLoop.add(resourceId);
+                if (resourceIdsInLoop.size() >= MX_RESOURCES_NUM) {
+                    tagResourcesOneBatch(resourceIdsInLoop, tagsToBeCreated);
+                    resourceIdsInLoop.clear();
+                }
+            }
+
+            if (! CollectionUtils.isNullOrEmpty(resourceIdsInLoop)) {
+                tagResourcesOneBatch(resourceIdsInLoop, tagsToBeCreated);
+            }
+
+            if (log.isTraceEnabled()) {
+                log.trace("End in class AWSClient in method tagResources with return: void: ");
+            }
+
+        } catch (AmazonServiceException ase) {
+            log.error("Tag resources list error." + ase.getMessage(),ase);
+        } catch (AmazonClientException ace) {
+            log.error("Tag  resources list error." + ace.getMessage(),ace);
+        } catch(Exception e) {
+            log.error("Tag  resources list error.", e);
+        }
+    }
+
+
+    /**
+    *
+    * @Title: tagResourcesOneBatch
+    * @Description: tag a list of resourceIds less than 500.
+    * @param @param resourceIds,tagValue
+    * @param @return
+    * @return void
+    * @throws
+    */
+    private static void tagResourcesOneBatch(List<String> resourceIds, List<Tag> tagsToBeCreated) {
+        if (log.isTraceEnabled()) {
+            log.trace("Start in class AWSClient in method tagEbsVolumes with parameters: resourceIds: " + resourceIds + ", tagsToBeCreated: "
+                      + tagsToBeCreated);
+        }
+        AmazonEC2 ec2 = getEC2Client();
+
+
+        try {
+            CreateTagsRequest createTagsRequest = new CreateTagsRequest();
+
+            log.trace("Creating tags with resource IDs: " + resourceIds);
+            log.trace("Creating the following tags: " + tagsToBeCreated);
+
+            createTagsRequest.withResources(resourceIds)
+            .withTags(tagsToBeCreated);
+            CreateTagsResult createTagsResult = ec2.createTags(createTagsRequest);
+            log.trace("Result tag: " + createTagsResult);
+            if (log.isTraceEnabled()) {
+                log.trace("End in class AWSClient in method tagResourcesOneBatch with return: void: ");
+            }
+
+        } catch (AmazonServiceException ase) {
+            log.error("Tag volume error." + ase.getMessage(),ase);
+        } catch (AmazonClientException ace) {
+            log.error("Tag volume error." + ace.getMessage(),ace);
+        } catch(Exception e) {
+            log.error("Tag volume error.", e);
+        }
+    }
 
     /**
      *
@@ -2057,12 +2196,43 @@ public class AWSClient {
             log.trace("Start in class AWSClient in method applyPostCreationBehaviorForInstanceList with parameters: newInstances: "
                       + newInstances);
         }
-        if (!CollectionUtils.isNullOrEmpty(newInstances)) {
-            for (Instance instance : newInstances) {
-                applyPostCreationBehaviorForInstance(awsRequest, instance, usedTemplate);
+        if (CollectionUtils.isNullOrEmpty(newInstances)) {
+            if (log.isTraceEnabled()) {
+                log.trace("End in class AWSClient in method applyPostCreationBehaviorForInstanceLis. No instances need tagged ");
+            }
+            return;
+        }
+
+        List<Tag> tagsToBeCreated = createTagsForInstanceCreation(
+                usedTemplate.getInstanceTags(),
+                awsRequest.getTagValue());
+        log.trace("Creating the following tags: " + tagsToBeCreated);
+
+        List<String> resourceIdList = new ArrayList<String>();
+        for (Instance instance : newInstances) {
+            String instanceId = instance.getInstanceId();
+            List<String> ebsIds = new ArrayList<String>();
+
+            List<InstanceBlockDeviceMapping> mappingList = instance.getBlockDeviceMappings();
+            for (InstanceBlockDeviceMapping mapping: mappingList) {
+                 if (mapping != null)	 {
+                     EbsInstanceBlockDevice ebs = mapping.getEbs();
+                     log.trace(mapping);
+                     if (ebs != null) {
+                        if (!StringUtils.isNullOrEmpty(ebs.getVolumeId())) {
+                            ebsIds.add(ebs.getVolumeId());
+                        }
+                    }
+                }
             }
 
+            resourceIdList.add(instanceId);
+            resourceIdList.addAll(ebsIds);
+            log.trace("Add to resourceIdList of instance" + instanceId +" Ebs Volumes: " + ebsIds);
         }
+
+        tagResources(resourceIdList, tagsToBeCreated);
+
         if (log.isTraceEnabled()) {
             log.trace("End in class AWSClient in method applyPostCreationBehaviorForInstanceList with return: void: ");
         }
