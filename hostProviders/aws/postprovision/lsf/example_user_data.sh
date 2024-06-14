@@ -13,6 +13,19 @@ echo START `date '+%Y-%m-%d %H:%M:%S'` >> $logfile
 # Add your customization script here
 #
 
+# By default AWS_TAG_InstanceID is unenabled in awsprov_config.json.
+# Uncomment following lines If you still want to tag 
+# both instance and ebs volumes with "InstnceID".
+# NOTE: It is required to install AWS CLI in your compute image.
+#
+#echo "tagging InstanceID to both instance and ebs volumes" >> $logfile
+#AWS_INSTANCE_ID=`curl -s http://169.254.169.254/latest/meta-data/instance-id`
+#ROOT_DISK_ID=`aws ec2 describe-volumes --filter Name=attachment.instance-id,Values="${AWS_INSTANCE_ID}" --query "Volumes[*].[VolumeId]"  --out text`
+#aws ec2 create-tags --resources "${AWS_INSTANCE_ID}" "${ROOT_DISK_ID}" --tags "Key=InstanceID,Value=${AWS_INSTANCE_ID}"
+#if [ $? -eq 0 ]; then
+#    echo "Done tagging InstanceID ${AWS_INSTANCE_ID} to instance and ebs volumes $ROOT_DISK_ID" >> $logfile
+#fi
+
 #
 # Source LSF enviornment at the VM host
 #
