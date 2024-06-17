@@ -233,15 +233,6 @@ public class AWSClient {
                     Process p = Runtime.getRuntime().exec(scriptFile);
 
                     // read output from the script file
-                    /*
-                    * SAMPLE OUTPUT Expected from the script file
-                    * -------------------------------------------
-                    * [default]
-                    * aws_access_key_id=ASIAIO25NORDTVZBECHQ
-                    * aws_secret_access_key=IlDyZzwwLOnTDM3PseScM/VNUpRxp636Zwj7uupI
-                    * aws_session_token=FQoDYXdzEK3//////////wEaDEzt78Cul6K4/oNTwyLLAn2fv5Yx38pn96mcTghZTYIGGwhwG7kiGopCmEa4kLK0SPuC2y+0U6GN6zIjeuzjWKOVKCk+nDx7hsI85KJLL0rUA0JwysWIDxfQy1A6hxxIN4nsfnH/oSqhrBK9dWV7fCzs8JaQoiLd5EQBF3lb53qMeBpRQlw6K3XpogM2IeyHJM6OZBVR37MhClofMzjI2S1heq9t6Qlj1onjk/mpXoeOjIHalSb896+8dB0WQXVYA3Ijr3iIlTFaGGoiHGma5vKScwSFZOBIriARQEAjyh7fOXyzNEtu9f456Z70ZXoSLNXOAt3y7JYfAsOe1pj9TYL+n23AmibgI5BgGxwJhxEIE+lALJNQ55ozZiba7x+TiteNNHdl0LefresMhIOsgV54dcMjdKWBnyE5M6wYfoZh+MIz5FbKCjVz5yxTX60q2FjNtX30mqqpe+wogY66xwU=
-                    *
-                    */
                     BufferedReader stdInput = new BufferedReader(new InputStreamReader(p.getInputStream()));
                     BufferedReader stdError = new BufferedReader(new InputStreamReader(p.getErrorStream()));
 
