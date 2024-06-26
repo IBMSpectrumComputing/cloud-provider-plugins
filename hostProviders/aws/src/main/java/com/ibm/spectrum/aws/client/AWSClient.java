@@ -1488,7 +1488,7 @@ public class AWSClient {
             log.trace("Creating the following tags: " + tagsToBeCreated);
 
             createTagsRequest.withResources(resourceIds)
-            .withTags(tagsToBeCreated);
+                             .withTags(tagsToBeCreated);
             CreateTagsResult createTagsResult = ec2.createTags(createTagsRequest);
             log.trace("Result tag: " + createTagsResult);
             if (log.isTraceEnabled()) {

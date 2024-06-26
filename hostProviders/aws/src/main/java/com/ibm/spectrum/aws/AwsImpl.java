@@ -919,7 +919,13 @@ public class AwsImpl implements IAws {
             if("running".equalsIgnoreCase(latestMachineStatus) && !latestMachineStatus.equalsIgnoreCase(tempMachineOldStatus)) {
                 log.debug("[Instance - " + inReq.getReqId() + " - " + tempMachineInDB.getReqId() + " - " + tempMachineInDB.getMachineId()
                            +"] Machine is successfully initiated. Ready for post creation behavior..");
-                postCreationInstList.add(correspondingInstanceForTempMachineInDB);
+                if (! AwsUtil.getConfig().getTagInstanceID().booleanValue()) {
+                     // Do not need tag "InstanceID", then we can do batch tagging in later applyPostCreationBehaviorForInstanceList
+                     postCreationInstList.add(correspondingInstanceForTempMachineInDB);
+                } else {
+                     // Need tag "InstanceID", tag instance one by one now.
+                     AWSClient.applyPostCreationBehaviorForInstance(fReq, correspondingInstanceForTempMachineInDB, usedTemplate);
+                }
             }
             tempMachineInDB.setStatus(latestMachineStatus);
             tempMachineInDB.setPublicIpAddress(correspondingInstanceForTempMachineInDB.getPublicIpAddress());
@@ -933,7 +939,8 @@ public class AwsImpl implements IAws {
 
         }
 
-        if (! CollectionUtils.isNullOrEmpty(postCreationInstList)) {
+        if ((! AwsUtil.getConfig().getTagInstanceID().booleanValue()) &&
+            (! CollectionUtils.isNullOrEmpty(postCreationInstList))) {
             AWSClient.applyPostCreationBehaviorForInstanceList(fReq, postCreationInstList, usedTemplate);
             log.debug("[ Running the post creation flow for instances:" + postCreationInstList.toString());
         }
