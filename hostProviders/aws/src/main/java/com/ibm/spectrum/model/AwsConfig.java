@@ -98,7 +98,7 @@ public class AwsConfig {
      *          both the instance and its ebs volumes.
      * if false, AWS plugin will not add "InstanceID" to new created instances.
      */
-    @JsonProperty("TAG_INSTANCEID")
+    @JsonProperty("AWS_TAG_InstanceID")
     @JsonInclude(Include.NON_NULL)
     private Boolean tagInstanceID = new Boolean(false);
 

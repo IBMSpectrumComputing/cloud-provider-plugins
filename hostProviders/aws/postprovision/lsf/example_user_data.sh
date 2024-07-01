@@ -13,7 +13,7 @@ echo START `date '+%Y-%m-%d %H:%M:%S'` >> $logfile
 # Add your customization script here
 #
 
-# By default TAG_INSTANCEID is unenabled in awsprov_config.json.
+# By default AWS_TAG_InstanceID is unenabled in awsprov_config.json.
 # Uncomment following lines If you still want to tag 
 # both instance and ebs volumes with "InstnceID".
 # NOTE: It is required to install AWS CLI in your compute image.
