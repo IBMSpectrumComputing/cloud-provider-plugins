@@ -93,6 +93,16 @@ public class AwsConfig {
     private Integer instanceCreationTimeout;
 
     /**
+     * Optional and type is Boolean (true/false). Default: false.
+     * if true, AWS plugin will add the tag of "InstanceID" to new created instances on
+     *          both the instance and its ebs volumes.
+     * if false, AWS plugin will not add "InstanceID" to new created instances.
+     */
+    @JsonProperty("AWS_TAG_InstanceID")
+    @JsonInclude(Include.NON_NULL)
+    private Boolean tagInstanceID = new Boolean(false);
+
+	/**
     * <p>Title: </p>
     * <p>Description: </p>
     */
@@ -225,6 +235,15 @@ public class AwsConfig {
         this.instanceCreationTimeout = instanceCreationTimeout;
     }
 
+    public Boolean getTagInstanceID() {
+        return tagInstanceID;
+    }
+
+    public void setTagInstanceID(Boolean tagInstanceID) {
+        this.tagInstanceID = tagInstanceID;
+    }
+
+
     /** (Non Javadoc)
     * <p>Title: toString</p>
     * <p>Description: </p>
@@ -250,6 +269,8 @@ public class AwsConfig {
         builder.append(spotTerminateOnReclaim);
         builder.append(", instanceCreationTimeout=");
         builder.append(instanceCreationTimeout);
+        builder.append(", tagInstanceID=");
+        builder.append(tagInstanceID);
         builder.append("]");
         return builder.toString();
     }
