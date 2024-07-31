@@ -145,6 +145,9 @@ import com.amazonaws.services.ec2.model.AllocationStrategy;
 import com.amazonaws.services.ec2.model.DescribeSubnetsRequest;
 import com.amazonaws.services.ec2.model.DescribeSubnetsResult;
 import com.amazonaws.services.ec2.model.Subnet;
+import com.amazonaws.client.builder.AwsClientBuilder.EndpointConfiguration;
+
+
 /**
  * @ClassName: AWSClient
  * @Description: The Client class for the AWS API
@@ -311,12 +314,35 @@ public class AWSClient {
             log.warn("AWS_REGION is not defined in awsprov_config.json. Using default region: "
                      + regionName);
         }
-        log.debug(String.format("Client connecting to region: %s", regionName));
 
-        // Create the AmazonEC2Client object so we can call various APIs.
-        ec2 = AmazonEC2ClientBuilder.standard()
-              .withCredentials(credsProvider)
-              .withRegion(regionName).build();
+        // get end point configuration
+        EndpointConfiguration endPointConfig = null;
+        String endpointURL = AwsUtil.getConfig().getAwsEndpointUrl();
+
+        if(!StringUtils.isNullOrEmpty(endpointURL)) {
+            endPointConfig = new EndpointConfiguration(endpointURL, regionName);
+            log.debug("Client connecting to endpoint: "+ endpointURL +" , signing region: " + regionName);
+        }
+        else {
+            log.debug("Client connecting to region: " +  regionName);
+        }
+
+
+
+        if (endPointConfig != null) {
+            ec2 = AmazonEC2ClientBuilder.standard()
+                    .withCredentials(credsProvider)
+                    .withEndpointConfiguration(endPointConfig)
+				    .build();
+            log.info("Create client to endpoint: " + endpointURL + ", signing region: " + regionName);
+        }
+        else {
+            ec2 = AmazonEC2ClientBuilder.standard()
+                    .withCredentials(credsProvider)
+                    .withRegion(regionName)
+				    .build();
+            log.info("Create client to region: " + regionName);
+        }
 
         if (log.isTraceEnabled()) {
             log.trace("End in class AWSClient in method getEC2Client with return: AmazonEC2: " + ec2);
