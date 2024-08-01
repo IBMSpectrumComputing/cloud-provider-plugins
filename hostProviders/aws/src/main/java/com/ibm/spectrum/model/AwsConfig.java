@@ -102,6 +102,16 @@ public class AwsConfig {
     @JsonInclude(Include.NON_NULL)
     private Boolean tagInstanceID = new Boolean(false);
 
+    /**
+     * Optional and type is string, specify
+     * the service endpoint either with or without the
+     * protocol (e.g. https://sns.us-west-1.amazonaws.com:443
+     * or sns.us-west-1.amazonaws.com)
+     */
+	@JsonProperty("AWS_ENDPOINT_URL")
+    private String awsEndpointUrl;
+
+
 	/**
     * <p>Title: </p>
     * <p>Description: </p>
@@ -118,6 +128,7 @@ public class AwsConfig {
         this.logLevel = c.getLogLevel();
         this.awsCredentialFile = c.getAwsCredentialFile();
         this.awsRegion = c.getAwsRegion();
+        this.awsEndpointUrl = c.getAwsEndpointUrl();
         this.awsKeyFile = c.getAwsKeyFile();
         this.awsCredentialScript = c.getAwsCredentialScript();
         this.awsCredentialMargin = c.getAwsCredentialMargin();
@@ -244,6 +255,22 @@ public class AwsConfig {
     }
 
 
+    /**
+    * @return awsEndpointUrl
+    */
+    public String getAwsEndpointUrl()
+    {
+        return awsEndpointUrl;
+    }
+
+    /**
+     * @param awsEndpointUrl the endpoint to set
+     */
+    public void setAwsEndpointUrl(String awsEndpointUrl)
+    {
+        this.awsEndpointUrl = awsEndpointUrl;
+    }
+
     /** (Non Javadoc)
     * <p>Title: toString</p>
     * <p>Description: </p>
@@ -259,6 +286,8 @@ public class AwsConfig {
         builder.append(awsCredentialFile);
         builder.append(", awsRegion=");
         builder.append(awsRegion);
+        builder.append(", awsEndpointUrl=");
+        builder.append(awsEndpointUrl);
         builder.append(", awsKeyFile=");
         builder.append(awsKeyFile);
         builder.append(", awsCredentialScript=");
