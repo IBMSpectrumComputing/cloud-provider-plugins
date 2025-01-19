@@ -111,7 +111,7 @@ def NextGenVPCInit(_config, _template):
   config = _config
   template = _template
 
-def create_instance(rg, vpc, profile, zone, image, subnet, sgs, ssh_id, templateUserData, tagValue, templateId, instance_name, userDataFile):
+def create_instance(rg, vpc, profile, zone, image, subnet, sgs, ssh_id, templateUserData, tagValue, templateId, instance_name, userDataFile, crn, volumeProfile):
   # Construct a dict representation of a SecurityGroupIdentityById model
   security_group_identity_model_list = []
   for id in sgs:
@@ -155,9 +155,29 @@ def create_instance(rg, vpc, profile, zone, image, subnet, sgs, ssh_id, template
   # Construct a dict representation of a InstanceMetadataServicePrototype model
   instance_metadata_model = {}
   instance_metadata_model['enabled'] = True
+  
+  if crn:
+    #Encryption 
+    encryption_key_identity_model = {}
+    encryption_key_identity_model['crn'] = crn
+
+    #profile model
+    profile_vol_instance_model = {}
+    profile_vol_instance_model['name'] = volumeProfile
+
+    #volume model
+    volume_instance_model = {}
+    volume_instance_model['encryption_key'] = encryption_key_identity_model
+    volume_instance_model['profile'] = profile_vol_instance_model
+
+    #Construct dict representation of InstanceBootVolumeProtoypebootvolume model
+    instance_boot_vol_model = {}
+    instance_boot_vol_model['volume'] = volume_instance_model
 
   # Construct a dict representation of a InstancePrototypeInstanceByImage model
   instance_prototype_model = {}
+  if crn:
+    instance_prototype_model['boot_volume_attachment'] = instance_boot_vol_model
   instance_prototype_model['keys'] = [key_identity_model]
   instance_prototype_model['name'] = instance_name
   instance_prototype_model['profile'] = instance_profile_identity_model
@@ -197,7 +217,6 @@ def create_instance(rg, vpc, profile, zone, image, subnet, sgs, ssh_id, template
 
   # Set up parameter values
   instance_prototype = instance_prototype_model
-
   response = service.create_instance(instance_prototype)
   return response
 
@@ -223,7 +242,9 @@ def create_multi_instances(args):
              tagValue,
              vsi.templateId,
              instanceName,
-             userData
+             userData,
+             vsi.crn,
+             vsi.volumeProfile
              ).get_result()
 
     logging.info("\tinstance id = %s" % newInstance['id'])
@@ -250,7 +271,6 @@ def request_new_machines(machineCount, tagValue):
     vmNameList.append(instanceName)
 
   args_map = [ (instance, template, config.provision_file, tagValue) for instance in vmNameList ]
-
   # create VSIs
   time1 = time.time()
   multi_results = vmPool.map(create_multi_instances, args_map)

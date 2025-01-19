@@ -159,6 +159,8 @@ class NextGenTemplate:
     self.zone = ""
     self.maxNumber = 0
     self.userData = ""
+    self.crn = ""
+    self.volumeProfile = "general-purpose"
 
     theJson = json.loads(content)
     if "templates" not in theJson: return
@@ -188,6 +190,10 @@ class NextGenTemplate:
           self.zone = template["zone"]
         if "userData" in template:
           self.userData = template["userData"]
+        if "crn" in template:
+          self.crn = template["crn"]
+        if "volumeProfile" in template:
+          self.volumeProfile = template["volumeProfile"]
 
   @property
   def maxNumber(self):
@@ -273,6 +279,20 @@ class NextGenTemplate:
   def userData(self, value):
     self._userData = value
 
+  @property
+  def crn(self):
+    return self._crn
+  @crn.setter
+  def crn(self, value):
+    self._crn = value
+
+  @property
+  def volumeProfile(self):
+    return self._volumeProfile
+  @volumeProfile.setter
+  def volumeProfile(self, value):
+    self._volumeProfile = value
+
   def __str__(self):
    return "imageId: " + self.imageId + "\n" + \
           "templateId: " + self.templateId + "\n" + \
@@ -284,10 +304,9 @@ class NextGenTemplate:
           "sshkey_id: " + self.sshkey_id + "\n" + \
           "region: " + self.region + "\n" + \
           "zone: " + self.zone + "\n" + \
-          "dns_instance_id: " + self.dns_instance_id + "\n" + \
-          "dns_zone_id: " + self.dns_zone_id  + "\n" + \
-          "domain_name: " + self.domain_name + "\n" + \
-          "userData: " + self.userData
+          "crn: " + self.crn + "\n" + \
+          "volumeProfile: " + self.volumeProfile + "\n" + \
+          "userData: " + self.userData 
 
 def GetNextGenConfigs(templateId=""):
 
