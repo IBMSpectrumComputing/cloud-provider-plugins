@@ -94,6 +94,10 @@ public class AzureRequest {
     @JsonInclude(Include.NON_NULL)
     private String tagValue;
 
+    @JsonProperty("templateId")
+    @JsonInclude(Include.NON_NULL)
+    private String templateId;
+
     /**
     * <p>Title: </p>
     * <p>Description: </p>
@@ -113,6 +117,7 @@ public class AzureRequest {
         this.machineId = req.getMachineId();
         this.machines = req.getMachines();
         this.tagValue = req.getTagValue();
+        this.templateId = req.getTemplateId();
     }
 
     public void hide() {
@@ -136,6 +141,20 @@ public class AzureRequest {
      */
     public void setReqId(String reqId) {
         this.reqId = reqId;
+    }
+
+    /**
+    * @return templateId
+    */
+    public String getTemplateId() {
+        return templateId;
+    }
+
+    /**
+     * @param templateId the templateId to set
+     */
+    public void setTemplateId(String templateId) {
+        this.templateId = templateId;
     }
 
     /**
@@ -275,6 +294,8 @@ public class AzureRequest {
         StringBuilder builder = new StringBuilder();
         builder.append("AzureRequest [reqId=");
         builder.append(reqId);
+        builder.append(", templateId=");
+        builder.append(templateId);
         builder.append(", msg=");
         builder.append(msg);
         builder.append(", status=");
