@@ -19,7 +19,7 @@
         <dependency>
             <groupId>com.microsoft.azure</groupId>
             <artifactId>azure</artifactId>
-            <version>1.0.0</version>
+            <version>1.41.4</version>
         </dependency>
         <dependency>
             <groupId>com.squareup.okhttp3</groupId>
