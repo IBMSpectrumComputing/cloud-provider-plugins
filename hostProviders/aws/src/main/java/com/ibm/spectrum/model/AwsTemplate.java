@@ -182,6 +182,13 @@ public class AwsTemplate {
     /**
      * Optional.
      */
+    @JsonProperty("efaCount")
+    @JsonInclude(Include.NON_NULL)
+    private Integer efaCount;
+
+    /**
+     * Optional.
+     */
     @JsonProperty("launchTemplateId")
     @JsonInclude(Include.NON_NULL)
     private String launchTemplateId;
@@ -249,6 +256,7 @@ public class AwsTemplate {
         this.priority = t.getPriority();
         this.tenancy = t.getTenancy();
         this.interfaceType = t.getInterfaceType();
+        this.efaCount = t.getEfaCount();
         this.launchTemplateId = t.getLaunchTemplateId();
         this.launchTemplateVersion = t.getLaunchTemplateVersion();
         this.marketSpotPrice = t.getMarketSpotPrice();
@@ -529,6 +537,20 @@ public class AwsTemplate {
     }
 
     /**
+     * @return efaCount
+     */
+    public Integer getEfaCount() {
+        return efaCount;
+    }
+
+    /**
+     * @param efaCount the desired efaCount to attach to a node
+     */
+    public void setEfaCount(Integer efaCount) {
+        this.efaCount = efaCount;
+    }
+
+    /**
      * @return launchTemplateId
      */
     public String getLaunchTemplateId() {
@@ -611,6 +633,8 @@ public class AwsTemplate {
         builder.append(this.tenancy);
         builder.append(", interfaceType=");
         builder.append(this.interfaceType);
+        builder.append(", efaCount=");
+        builder.append(this.efaCount);
         builder.append(", launchTemplateId=");
         builder.append(this.launchTemplateId);
         builder.append(", launchTemplateVersion=");

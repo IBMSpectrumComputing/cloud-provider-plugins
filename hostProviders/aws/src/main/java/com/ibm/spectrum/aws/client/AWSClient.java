@@ -52,7 +52,6 @@ import com.amazonaws.services.ec2.model.CreateKeyPairRequest;
 import com.amazonaws.services.ec2.model.CreateKeyPairResult;
 import com.amazonaws.services.ec2.model.CreateTagsRequest;
 import com.amazonaws.services.ec2.model.CreateTagsResult;
-import com.amazonaws.services.ec2.model.DefaultTargetCapacityType;
 import com.amazonaws.services.ec2.model.DescribeInstanceStatusRequest;
 import com.amazonaws.services.ec2.model.DescribeInstanceStatusResult;
 import com.amazonaws.services.ec2.model.DescribeInstancesRequest;
@@ -66,12 +65,10 @@ import com.amazonaws.services.ec2.model.DescribeSpotFleetRequestsResult;
 import com.amazonaws.services.ec2.model.DescribeSpotInstanceRequestsRequest;
 import com.amazonaws.services.ec2.model.DescribeSpotInstanceRequestsResult;
 import com.amazonaws.services.ec2.model.EbsInstanceBlockDevice;
-import com.amazonaws.services.ec2.model.Filter;
 import com.amazonaws.services.ec2.model.FleetActivityStatus;
 import com.amazonaws.services.ec2.model.FleetData;
 import com.amazonaws.services.ec2.model.FleetLaunchTemplateConfig;
 import com.amazonaws.services.ec2.model.FleetLaunchTemplateConfigRequest;
-import com.amazonaws.services.ec2.model.FleetLaunchTemplateOverridesRequest;
 import com.amazonaws.services.ec2.model.FleetType;
 import com.amazonaws.services.ec2.model.Instance;
 import com.amazonaws.services.ec2.model.InstanceBlockDeviceMapping;
@@ -93,16 +90,13 @@ import com.amazonaws.services.ec2.model.SpotFleetRequestConfigData;
 import com.amazonaws.services.ec2.model.SpotInstanceRequest;
 import com.amazonaws.services.ec2.model.SpotInstanceState;
 import com.amazonaws.services.ec2.model.SpotInstanceStatus;
-import com.amazonaws.services.ec2.model.SpotOptionsRequest;
 import com.amazonaws.services.ec2.model.TagSpecification;
 import com.amazonaws.services.ec2.model.TargetCapacitySpecificationRequest;
-import com.amazonaws.services.ec2.model.TargetCapacityUnitType;
 import com.amazonaws.services.ec2.model.Tag;
 import com.amazonaws.services.ec2.model.ResourceType;
 import com.amazonaws.services.ec2.model.TerminateInstancesRequest;
 import com.amazonaws.services.ec2.model.TerminateInstancesResult;
 import com.amazonaws.services.ec2.model.InstanceNetworkInterfaceSpecification;
-import com.amazonaws.services.ec2.model.InstanceNetworkInterface;
 import com.amazonaws.services.ec2.model.LaunchTemplateConfig;
 import com.amazonaws.services.ec2.model.DeleteLaunchTemplateRequest;
 import com.amazonaws.services.ec2.model.DeleteLaunchTemplateResult;
@@ -112,12 +106,9 @@ import com.amazonaws.services.ec2.model.CreateLaunchTemplateResult;
 import com.amazonaws.services.ec2.model.FleetLaunchTemplateSpecification;
 import com.amazonaws.services.ec2.model.FleetLaunchTemplateSpecificationRequest;
 import com.amazonaws.services.ec2.model.FleetStateCode;
-import com.amazonaws.services.ec2.model.LaunchTemplateConfig;
 import com.amazonaws.services.ec2.model.LaunchTemplateInstanceNetworkInterfaceSpecificationRequest;
 import com.amazonaws.services.ec2.model.LaunchTemplatePlacementRequest;
-import com.amazonaws.services.ec2.model.LaunchTemplateIamInstanceProfileSpecificationRequest;
 import com.amazonaws.services.ec2.model.LaunchTemplateTagSpecificationRequest;
-import com.amazonaws.services.ec2.model.OnDemandOptionsRequest;
 import com.amazonaws.services.ec2.model.LaunchTemplateSpecification;
 import com.amazonaws.services.ec2.model.LaunchTemplateOverrides;
 import com.amazonaws.services.ec2.model.CreateLaunchTemplateVersionResult;
@@ -126,7 +117,6 @@ import com.amazonaws.services.ec2.model.DeleteLaunchTemplateVersionsRequest;
 import com.amazonaws.services.ec2.model.DeleteLaunchTemplateVersionsResult;
 import com.amazonaws.services.ec2.model.DescribeFleetInstancesRequest;
 import com.amazonaws.services.ec2.model.DescribeFleetInstancesResult;
-import com.amazonaws.services.ec2.model.DescribeFleetsInstances;
 import com.amazonaws.services.ec2.model.DescribeFleetsRequest;
 import com.amazonaws.services.ec2.model.DescribeFleetsResult;
 import com.amazonaws.util.CollectionUtils;
@@ -140,7 +130,6 @@ import com.ibm.spectrum.util.AwsUtil;
 import com.ibm.spectrum.model.AwsEntity;
 import com.amazonaws.services.ec2.model.DescribeSpotPriceHistoryRequest;
 import com.amazonaws.services.ec2.model.DescribeSpotPriceHistoryResult;
-import com.amazonaws.services.ec2.model.SpotPrice;
 import com.amazonaws.services.ec2.model.AllocationStrategy;
 import com.amazonaws.services.ec2.model.DescribeSubnetsRequest;
 import com.amazonaws.services.ec2.model.DescribeSubnetsResult;
@@ -589,14 +578,38 @@ public class AWSClient {
             req.setMinCount(1);
             req.setMaxCount(t.getVmNumber());
             String encodedUserData = AwsUtil.getEncodedUserData(t, tagValue);
+            String interfaceType = t.getInterfaceType();
 
-            if (!StringUtils.isNullOrEmpty(t.getInterfaceType())) {
-                InstanceNetworkInterfaceSpecification nic = new InstanceNetworkInterfaceSpecification();
-                nic.withDeviceIndex(0);
-                nic.withSubnetId(t.getSubnetId());
-                nic.withGroups(t.getSgIds());
-                nic.withInterfaceType(t.getInterfaceType().trim());
-                req.withInstanceType(t.getVmType()).withNetworkInterfaces(nic);
+            if (!StringUtils.isNullOrEmpty(interfaceType)) {
+                // Begin allocating NIC(s) for the current instance
+                interfaceType = interfaceType.trim().toLowerCase();
+
+                // Figure out how many NICs we want to attach to this instance
+                int nicCount = 1;
+                if (interfaceType.equals("efa") && t.getEfaCount() != null) {
+                    nicCount = t.getEfaCount();
+
+                    // An ec2:DescribeInstances can be used to get the interface layout and make
+                    // the code more useful, such as below; for now, we'll "fail" at provisioning
+                    // if the config is incorrect
+                    // nicCount = Math.min(Math.max(nicCount, MIN_EFA_COUNT), MAX_EFA_COUNT);
+                }
+
+                // Build list of NICs to attach to the instance
+                List<InstanceNetworkInterfaceSpecification> nicList = new ArrayList<>(nicCount);
+
+                for (int networkCardIndex = 0; networkCardIndex < nicCount; networkCardIndex++) {
+                    InstanceNetworkInterfaceSpecification nic = new InstanceNetworkInterfaceSpecification();
+                    nic.withInterfaceType(interfaceType);
+                    nic.withDeviceIndex(networkCardIndex == 0 ? 0 : 1);
+                    nic.withNetworkCardIndex(networkCardIndex);
+                    nic.withSubnetId(t.getSubnetId());
+                    nic.withGroups(t.getSgIds());
+                    nic.withDeleteOnTermination(true);
+                    nicList.add(nic);
+                }
+
+                req.withInstanceType(t.getVmType()).withNetworkInterfaces(nicList);
             } else {
                 req.withInstanceType(t.getVmType()).withSubnetId(t.getSubnetId()).withSecurityGroupIds(t.getSgIds());
             }
@@ -645,9 +658,7 @@ public class AWSClient {
 
             // Set ebsOptimized attribute
             boolean ebsOptimized = t.getEbsOptimized();
-            if (ebsOptimized == true) {
-                req.setEbsOptimized(ebsOptimized);
-            }
+            req.setEbsOptimized(ebsOptimized);
 
             // Create instances
             RunInstancesResult rs = ec2.runInstances(req);
