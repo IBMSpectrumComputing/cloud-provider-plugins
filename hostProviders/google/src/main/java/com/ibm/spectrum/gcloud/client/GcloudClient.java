@@ -58,7 +58,7 @@ import com.google.api.client.http.HttpHeaders;
 import com.google.api.client.http.HttpRequest;
 import com.google.api.client.http.HttpTransport;
 import com.google.api.client.json.JsonFactory;
-import com.google.api.client.json.jackson2.JacksonFactory;
+import com.google.api.client.json.gson.GsonFactory;
 import com.google.api.services.compute.Compute;
 import com.google.api.services.compute.ComputeScopes;
 import com.google.api.services.compute.model.AcceleratorConfig;
@@ -92,7 +92,7 @@ public class GcloudClient {
     private static HttpTransport httpTransport;
 
     /** Global instance of the JSON factory. */
-    private static final JsonFactory JSON_FACTORY = JacksonFactory.getDefaultInstance();
+    private static final GsonFactory JSON_FACTORY = GsonFactory.getDefaultInstance();
 
     /**
      * Get the Google Cloud Compute
