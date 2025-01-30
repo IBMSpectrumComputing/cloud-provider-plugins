@@ -1,1 +1,5 @@
 *.class
+.idea
+.DS_Store
+hostProviders/*/lib/
+hostProviders/*/target/
