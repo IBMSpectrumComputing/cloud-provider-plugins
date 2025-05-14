@@ -111,7 +111,7 @@ def NextGenVPCInit(_config, _template):
   config = _config
   template = _template
 
-def create_instance(rg, vpc, profile, zone, image, subnet, sgs, ssh_id, templateUserData, tagValue, templateId, instance_name, userDataFile, crn, volumeProfile):
+def create_instance(rg, vpc, profile, zone, dedicatedHostGroupId, image, subnet, sgs, ssh_id, templateUserData, tagValue, templateId, instance_name, userDataFile, crn, volumeProfile):
   # Construct a dict representation of a SecurityGroupIdentityById model
   security_group_identity_model_list = []
   for id in sgs:
@@ -125,6 +125,11 @@ def create_instance(rg, vpc, profile, zone, image, subnet, sgs, ssh_id, template
     subnet_identity_model['crn'] = subnet
   else:
     subnet_identity_model['id'] = subnet
+
+  # Construct a dict representation of a DedicatedHostGroupById model
+  if dedicatedHostGroupId:
+    dedicated_host_group_identity_model = {}
+    dedicated_host_group_identity_model['id'] = dedicatedHostGroupId
 
   # Construct a dict representation of a ImageIdentityById model
   image_identity_model = {}
@@ -178,6 +183,8 @@ def create_instance(rg, vpc, profile, zone, image, subnet, sgs, ssh_id, template
   instance_prototype_model = {}
   if crn:
     instance_prototype_model['boot_volume_attachment'] = instance_boot_vol_model
+  if dedicatedHostGroupId:
+    instance_prototype_model['placement_target'] = dedicated_host_group_identity_model
   instance_prototype_model['keys'] = [key_identity_model]
   instance_prototype_model['name'] = instance_name
   instance_prototype_model['profile'] = instance_profile_identity_model
@@ -234,6 +241,7 @@ def create_multi_instances(args):
              vsi.vpcId,
              vsi.vmType,
              vsi.zone,
+             vsi.dedicatedHostGroupId,
              vsi.imageId,
              vsi.subnetId,
              vsi.securityGroupId,
