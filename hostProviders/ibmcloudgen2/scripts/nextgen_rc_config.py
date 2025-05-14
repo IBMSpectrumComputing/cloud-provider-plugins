@@ -157,6 +157,7 @@ class NextGenTemplate:
     self.sshkey_id = ""
     self.region = ""
     self.zone = ""
+    self.dedicatedHostGroupId = ""
     self.maxNumber = 0
     self.userData = ""
     self.crn = ""
@@ -188,6 +189,8 @@ class NextGenTemplate:
           self.region = template["region"]
         if "zone" in template:
           self.zone = template["zone"]
+        if "dedicatedHostGroupId" in template:
+          self.dedicatedHostGroupId = template["dedicatedHostGroupId"]
         if "userData" in template:
           self.userData = template["userData"]
         if "crn" in template:
@@ -273,6 +276,13 @@ class NextGenTemplate:
     self._zone = value
 
   @property
+  def dedicatedHostGroupId(self):
+    return self._dedicatedHostGroupId
+  @dedicatedHostGroupId.setter
+  def dedicatedHostGroupId(self, value):
+    self._dedicatedHostGroupId = value  
+
+  @property
   def userData(self):
     return self._userData
   @userData.setter
@@ -304,6 +314,7 @@ class NextGenTemplate:
           "sshkey_id: " + self.sshkey_id + "\n" + \
           "region: " + self.region + "\n" + \
           "zone: " + self.zone + "\n" + \
+          "dedicatedHostGroupId: " + self.dedicatedHostGroupId + "\n" + \
           "crn: " + self.crn + "\n" + \
           "volumeProfile: " + self.volumeProfile + "\n" + \
           "userData: " + self.userData 
