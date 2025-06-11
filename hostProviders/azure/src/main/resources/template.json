@@ -62,10 +62,10 @@
               "Description": "Tagvalues where resource used"
             }
         },
-        "imageId": {
+        "imageReference": {
             "type": "string",
             "metadata": {
-              "Description": "Specify virtual machine image id which will be used to provision virtual machine."
+              "Description": "JSON string containing image reference (either custom image or gallery image)."
             }
         },
         "postScriptUri": {
@@ -98,6 +98,7 @@
         "vnetId": "[resourceId(parameters('virtualNetworkResourceGroup'),'Microsoft.Network/virtualNetworks', parameters('virtualNetworkName'))]",
         "subnetRef": "[concat(variables('vnetId'), '/subnets/', parameters('subnetName'))]",
         "networkInterfaceName": "[parameters('networkInterfaceName')]",
+        "parsedImageReference": "[json(parameters('imageReference'))]",
         "osDiskName": "[concat(parameters('virtualMachineName'), '-osdisk')]",
         "extensionName": "[concat(parameters('virtualMachineName'), '/ext')]",
         "post-script": {
@@ -111,7 +112,7 @@
         {
             "name": "[parameters('virtualMachineName')]",
             "type": "Microsoft.Compute/virtualMachines",
-            "apiVersion": "2016-04-30-preview",
+            "apiVersion": "2021-03-01",
             "location": "[variables('location')]",
             "tags": "[parameters('tagValues')]",
             "dependsOn": [
@@ -137,12 +138,10 @@
                     "vmSize": "[parameters('virtualMachineSize')]"
                 },
                 "storageProfile": {
-                    "imageReference": {
-                        "id": "[parameters('imageId')]"
-                    },
+                    "imageReference": "[variables('parsedImageReference')]",
                     "osDisk": {
                         "name": "[variables('osDiskName')]",
-                        "createOption": "fromImage",
+                        "createOption": "FromImage",
                         "managedDisk": {
                             "storageAccountType": "[parameters('storageAccountType')]"
                         }

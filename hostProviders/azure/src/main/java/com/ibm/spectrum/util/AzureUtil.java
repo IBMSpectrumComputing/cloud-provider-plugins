@@ -75,6 +75,7 @@ import com.microsoft.azure.management.resources.fluentcore.arm.models.Resource.D
 import com.microsoft.azure.management.resources.fluentcore.model.Creatable;
 import com.microsoft.azure.management.compute.VirtualMachines;
 import com.microsoft.azure.management.compute.AvailabilitySet;
+import com.microsoft.azure.management.compute.GalleryImage;
 import com.microsoft.azure.management.compute.PowerState;
 import com.microsoft.azure.management.compute.StorageAccountTypes;
 import com.microsoft.azure.management.compute.VirtualMachine;
@@ -670,23 +671,42 @@ public class AzureUtil {
     }
 
     /**
-     * @Title: getImage
-     * @Description: get lsf slave image on Azure
+     * @Title: getImageReferenceJson
+     * @Description: get lsf image from either custom image or compute galleries on Azure
      * @param
-     * @return List<Instance> @throws
+     * @return JSON string representing the image reference
      */
-    public static VirtualMachineCustomImage getImage(AzureTemplate t) {
-        VirtualMachineCustomImage image = null;
-        try {
-            azure = getAzureClient();
-            image = azure.virtualMachineCustomImages().getByResourceGroup(t.getResourceGroup(), t.getImageId());
-        } catch (Exception e) {
-            log.error(
-                "Failed to get custom image <" + t.getImageId() + "> in Resource Group <" + t.getResourceGroup() + ">.");
-            log.error(e);
+    public static String getImageReferenceJson(AzureTemplate t) {
+        // Use getters to access the values
+        String imageId = t.getImageId();
+        String imageName = t.getImageName();
+
+        String imageReferenceId;
+
+        if (imageId != null && !imageId.trim().isEmpty()) {
+            try {
+                Azure azure = getAzureClient();
+                VirtualMachineCustomImage image = azure.virtualMachineCustomImages()
+                    .getByResourceGroup(t.getResourceGroup(), imageId);
+
+                if (image == null) {
+                    throw new RuntimeException("Custom image not found: " + imageId);
+                }
+
+                imageReferenceId = image.id();  // This gives the full Azure Resource ID
+            } catch (Exception e) {
+                log.error("Failed to get custom image from Azure: " + imageId);
+                throw new RuntimeException("Error retrieving custom image", e);
+            }
+
+        } else if (imageName != null && !imageName.trim().isEmpty()) {
+            // Gallery image ID is already complete
+            imageReferenceId = imageName;
+        } else {
+            throw new IllegalArgumentException("Either imageId or imageName must be provided.");
         }
 
-        return image;
+        return String.format("{ \"id\": \"%s\" }", imageReferenceId);
     }
 
     /**
@@ -744,10 +764,10 @@ public class AzureUtil {
                           + t.getResourceGroup() + "> for template <" + t.getTemplateId() + "> to create VM.");
                 return null;
             }
-            VirtualMachineCustomImage virtualMachineCustomImage = getImage(t);
-            if (virtualMachineCustomImage == null) {
-                log.error("Can not find image <" + t.getImageId() + "> in resource group <" + t.getResourceGroup()
-                          + "> for tempalte <" + t.getTemplateId() + "> to create VM.");
+            // Handle image reference with imageId taking precedence
+            String imageRefJson = getImageReferenceJson(t);
+            if (imageRefJson == null) {
+                log.error("No valid image reference could be created");
                 return null;
             }
             String templatefile = "";
@@ -815,7 +835,7 @@ public class AzureUtil {
             }
             validateAndAddJsonNode("object", mapper.readTree(mapper.writeValueAsString(tags)), "tagValues", null, tmp);
             validateAndAddFieldValue("string", netSg.name(), "networkSecurityGroups", null, tmp);
-            validateAndAddFieldValue("string", virtualMachineCustomImage.id(), "imageId", null, tmp);
+            validateAndAddFieldValue("string", imageRefJson, "imageReference", null, tmp);
             validateAndAddFieldValue("string", t.getSubnetName(), "subnetName", null, tmp);
             validateAndAddFieldValue("string", t.getResourceGroup(), "virtualNetworkResourceGroup", null, tmp);
             validateAndAddFieldValue("string", t.getVirtualNetwork(), "virtualNetworkName", null, tmp);
