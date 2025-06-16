@@ -776,7 +776,7 @@ public class AzureUtil {
             throw new IllegalArgumentException("Either imageId or imageName must be provided.");
         }
 
-        return String.format("{ \"id\": \"%s\" }", imageReferenceId);
+        return imageReferenceId;
     }
 
     /**
@@ -905,7 +905,7 @@ public class AzureUtil {
             }
             validateAndAddJsonNode("object", mapper.readTree(mapper.writeValueAsString(tags)), "tagValues", null, tmp);
             validateAndAddFieldValue("string", netSg.name(), "networkSecurityGroups", null, tmp);
-            validateAndAddFieldValue("string", imageRefJson, "imageReference", null, tmp);
+            validateAndAddFieldValue("string", imageRefJson, "imageId", null, tmp);
             validateAndAddFieldValue("string", t.getSubnetName(), "subnetName", null, tmp);
             validateAndAddFieldValue("string", t.getResourceGroup(), "virtualNetworkResourceGroup", null, tmp);
             validateAndAddFieldValue("string", t.getVirtualNetwork(), "virtualNetworkName", null, tmp);

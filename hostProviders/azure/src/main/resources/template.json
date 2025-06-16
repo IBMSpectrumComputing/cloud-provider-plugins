@@ -62,10 +62,10 @@
               "Description": "Tagvalues where resource used"
             }
         },
-        "imageReference": {
+        "imageId": {
             "type": "string",
             "metadata": {
-              "Description": "JSON string containing image reference (either custom image or gallery image)."
+              "Description": "Specify virtual machine image id (custom image or azure compute gallery image) which will be used to provision virtual machine."
             }
         },
         "postScriptUri": {
@@ -98,7 +98,6 @@
         "vnetId": "[resourceId(parameters('virtualNetworkResourceGroup'),'Microsoft.Network/virtualNetworks', parameters('virtualNetworkName'))]",
         "subnetRef": "[concat(variables('vnetId'), '/subnets/', parameters('subnetName'))]",
         "networkInterfaceName": "[parameters('networkInterfaceName')]",
-        "parsedImageReference": "[json(parameters('imageReference'))]",
         "osDiskName": "[concat(parameters('virtualMachineName'), '-osdisk')]",
         "extensionName": "[concat(parameters('virtualMachineName'), '/ext')]",
         "post-script": {
@@ -138,10 +137,12 @@
                     "vmSize": "[parameters('virtualMachineSize')]"
                 },
                 "storageProfile": {
-                    "imageReference": "[variables('parsedImageReference')]",
+                    "imageReference": {
+                        "id": "[parameters('imageId')]"
+                    },
                     "osDisk": {
                         "name": "[variables('osDiskName')]",
-                        "createOption": "FromImage",
+                        "createOption": "fromImage",
                         "managedDisk": {
                             "storageAccountType": "[parameters('storageAccountType')]"
                         }
