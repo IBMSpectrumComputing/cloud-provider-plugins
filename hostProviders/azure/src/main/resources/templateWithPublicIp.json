@@ -65,7 +65,7 @@
         "imageId": {
             "type": "string",
             "metadata": {
-              "Description": "Specify virtual machine image id which will be used to provision virtual machine."
+              "Description": "Specify virtual machine image id (custom image or azure compute gallery image) which will be used to provision virtual machine."
             }
         },
         "postScriptUri": {
@@ -117,7 +117,7 @@
         {
             "name": "[parameters('virtualMachineName')]",
             "type": "Microsoft.Compute/virtualMachines",
-            "apiVersion": "2016-04-30-preview",
+            "apiVersion": "2021-03-01",
             "location": "[variables('location')]",
             "tags": "[parameters('tagValues')]",
             "dependsOn": [
