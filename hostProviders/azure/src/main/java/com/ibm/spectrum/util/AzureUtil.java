@@ -691,12 +691,12 @@ public class AzureUtil {
     }
 
     /**
-     * @Title: getImageReferenceJson
+     * @Title: getImage
      * @Description: get lsf image from either custom image or compute galleries on Azure
      * @param
-     * @return JSON string representing the image reference
+     * @return string representing the image reference
      */
-    public static String getImageReferenceJson(AzureTemplate t) {
+    public static String getImage(AzureTemplate t) {
         String imageId = t.getImageId();
         String imageName = t.getImageName();  // assumed to be a full resource ID
 
@@ -835,8 +835,8 @@ public class AzureUtil {
                 return null;
             }
             // Handle image reference with imageId taking precedence
-            String imageRefJson = getImageReferenceJson(t);
-            if (imageRefJson == null) {
+            String imageRef = getImage(t);
+            if (imageRef == null) {
                 log.error("No valid image reference could be created");
                 return null;
             }
@@ -905,7 +905,7 @@ public class AzureUtil {
             }
             validateAndAddJsonNode("object", mapper.readTree(mapper.writeValueAsString(tags)), "tagValues", null, tmp);
             validateAndAddFieldValue("string", netSg.name(), "networkSecurityGroups", null, tmp);
-            validateAndAddFieldValue("string", imageRefJson, "imageId", null, tmp);
+            validateAndAddFieldValue("string", imageRef, "imageId", null, tmp);
             validateAndAddFieldValue("string", t.getSubnetName(), "subnetName", null, tmp);
             validateAndAddFieldValue("string", t.getResourceGroup(), "virtualNetworkResourceGroup", null, tmp);
             validateAndAddFieldValue("string", t.getVirtualNetwork(), "virtualNetworkName", null, tmp);
