@@ -59,6 +59,9 @@ public class AzureTemplate {
     private String imageId;
 
     @JsonInclude(Include.NON_NULL)
+    private String imageName;
+
+    @JsonInclude(Include.NON_NULL)
     private String storageAccountType;
 
     @JsonInclude(Include.NON_NULL)
@@ -188,6 +191,7 @@ public class AzureTemplate {
     public AzureTemplate(AzureTemplate t) {
         this.templateId = t.getTemplateId();
         this.imageId = t.getImageId();
+        this.imageName = t.getImageName();
         this.storageAccountType = t.storageAccountType;
         this.vmType = t.getVmType();
         this.vmNumber = t.getVmNumber();
@@ -261,6 +265,19 @@ public class AzureTemplate {
         this.imageId = imageId;
     }
 
+    /**
+    * @return imageName
+    */
+    public String getImageName() {
+        return imageName;
+    }
+
+    /**
+     * @param imageName the imageName to set
+     */
+    public void setImageName(String imageName) {
+        this.imageName = imageName;
+    }
 
     /**
     * @return vmType
@@ -505,6 +522,8 @@ public class AzureTemplate {
         builder.append(attributes);
         builder.append(", imageId=");
         builder.append(imageId);
+        builder.append(", imageName=");
+        builder.append(imageName);
         builder.append(", storageAccountType=");
         builder.append(storageAccountType);
         builder.append(", vmType=");

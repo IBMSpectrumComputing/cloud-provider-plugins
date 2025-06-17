@@ -75,6 +75,9 @@ import com.microsoft.azure.management.resources.fluentcore.arm.models.Resource.D
 import com.microsoft.azure.management.resources.fluentcore.model.Creatable;
 import com.microsoft.azure.management.compute.VirtualMachines;
 import com.microsoft.azure.management.compute.AvailabilitySet;
+import com.microsoft.azure.management.compute.GalleryImage;
+import com.microsoft.azure.management.compute.GalleryImageVersion;
+import com.microsoft.azure.management.resources.fluentcore.arm.ResourceUtils;
 import com.microsoft.azure.management.compute.PowerState;
 import com.microsoft.azure.management.compute.StorageAccountTypes;
 import com.microsoft.azure.management.compute.VirtualMachine;
@@ -670,23 +673,110 @@ public class AzureUtil {
     }
 
     /**
-     * @Title: getImage
-     * @Description: get lsf slave image on Azure
+     * @Title: getNameFromImageName
+     * @Description: To support extracting parts like galleryName, imageName, and version from compute galleries on Azure (limitation of 1.x SDK)
      * @param
-     * @return List<Instance> @throws
+     * @return string representing the image reference
      */
-    public static VirtualMachineCustomImage getImage(AzureTemplate t) {
-        VirtualMachineCustomImage image = null;
-        try {
-            azure = getAzureClient();
-            image = azure.virtualMachineCustomImages().getByResourceGroup(t.getResourceGroup(), t.getImageId());
-        } catch (Exception e) {
-            log.error(
-                "Failed to get custom image <" + t.getImageId() + "> in Resource Group <" + t.getResourceGroup() + ">.");
-            log.error(e);
+    public static String getNameFromImageName(String imageName, String key) {
+        if (imageName == null || key == null) return null;
+
+        String[] parts = imageName.split("/");
+        for (int i = 0; i < parts.length - 1; i++) {
+            if (parts[i].equalsIgnoreCase(key)) {
+                return parts[i + 1];
+            }
+        }
+        return null;
+    }
+
+    /**
+     * @Title: getImage
+     * @Description: get lsf image from either custom image or compute galleries on Azure
+     * @param
+     * @return string representing the image reference
+     */
+    public static String getImage(AzureTemplate t) {
+        String imageId = t.getImageId();
+        String imageName = t.getImageName();  // assumed to be a full resource ID
+
+        String imageReferenceId;
+
+        if (imageId != null && !imageId.trim().isEmpty()) {
+            try {
+                Azure azure = getAzureClient();
+                VirtualMachineCustomImage image = azure.virtualMachineCustomImages()
+                        .getByResourceGroup(t.getResourceGroup(), imageId);
+
+                if (image == null) {
+                    throw new RuntimeException("Custom image not found: " + imageId);
+                }
+
+                imageReferenceId = image.id();
+            } catch (Exception e) {
+                log.error("Failed to get custom image from Azure: " + imageId);
+                throw new RuntimeException("Error retrieving custom image", e);
+            }
+
+        } else if (imageName != null && !imageName.trim().isEmpty()) {
+            try {
+                Azure azure = getAzureClient();
+                imageName = imageName.trim();
+
+                if (imageName.toLowerCase().contains("/providers/microsoft.compute/images/")) {
+                    // It's a custom image
+                    String resourceGroup = ResourceUtils.groupFromResourceId(imageName);
+                    String customImageName = ResourceUtils.nameFromResourceId(imageName);
+                    VirtualMachineCustomImage customImage =
+                            azure.virtualMachineCustomImages().getByResourceGroup(resourceGroup, customImageName);
+
+                    if (customImage == null) {
+                        throw new RuntimeException("Custom image not found: " + customImageName);
+                    }
+
+                    imageReferenceId = customImage.id();
+
+                } else if (imageName.toLowerCase().contains("/providers/microsoft.compute/galleries/")) {
+                    // It's a compute gallery image (could be with or without version)
+                    String resourceGroup = ResourceUtils.groupFromResourceId(imageName);
+                    String galleryName = getNameFromImageName(imageName, "galleries");
+                    String galleryImageName = getNameFromImageName(imageName, "images");
+
+                    if (imageName.toLowerCase().contains("/versions/")) {
+                        String versionName = getNameFromImageName(imageName, "versions");
+                        GalleryImageVersion version = azure.galleryImageVersions()
+                                .getByGalleryImage(resourceGroup, galleryName, galleryImageName, versionName);
+                        if (version == null) {
+                            throw new RuntimeException("Gallery image version not found: " + versionName);
+                        }
+                        imageReferenceId = version.id();
+                    } else {
+                        GalleryImage galleryImage = azure.galleryImages()
+                                .getByGallery(resourceGroup, galleryName, galleryImageName);
+                        if (galleryImage == null) {
+                            throw new RuntimeException("Gallery image not found: " + galleryImageName);
+                        }
+                        imageReferenceId = galleryImage.id();
+                    }
+
+                } else if (imageName.toLowerCase().startsWith("/communitygalleries/")) {
+                    // Community gallery image (does not require subscription or resource group)
+                    // Cannot validate via SDK 1.x, so just passing the imageName as-is. No validation can be done.
+                    imageReferenceId = imageName;
+                } else {
+                    throw new IllegalArgumentException("Unsupported image resource ID format: " + imageName);
+                }
+
+            } catch (Exception e) {
+                log.error("Failed to validate imageName resource ID: " + imageName, e);
+                throw new RuntimeException("Error determining or verifying image type", e);
+            }
+
+        } else {
+            throw new IllegalArgumentException("Either imageId or imageName must be provided.");
         }
 
-        return image;
+        return imageReferenceId;
     }
 
     /**
@@ -744,10 +834,10 @@ public class AzureUtil {
                           + t.getResourceGroup() + "> for template <" + t.getTemplateId() + "> to create VM.");
                 return null;
             }
-            VirtualMachineCustomImage virtualMachineCustomImage = getImage(t);
-            if (virtualMachineCustomImage == null) {
-                log.error("Can not find image <" + t.getImageId() + "> in resource group <" + t.getResourceGroup()
-                          + "> for tempalte <" + t.getTemplateId() + "> to create VM.");
+            // Handle image reference with imageId taking precedence
+            String imageRef = getImage(t);
+            if (imageRef == null) {
+                log.error("No valid image reference could be created");
                 return null;
             }
             String templatefile = "";
@@ -815,7 +905,7 @@ public class AzureUtil {
             }
             validateAndAddJsonNode("object", mapper.readTree(mapper.writeValueAsString(tags)), "tagValues", null, tmp);
             validateAndAddFieldValue("string", netSg.name(), "networkSecurityGroups", null, tmp);
-            validateAndAddFieldValue("string", virtualMachineCustomImage.id(), "imageId", null, tmp);
+            validateAndAddFieldValue("string", imageRef, "imageId", null, tmp);
             validateAndAddFieldValue("string", t.getSubnetName(), "subnetName", null, tmp);
             validateAndAddFieldValue("string", t.getResourceGroup(), "virtualNetworkResourceGroup", null, tmp);
             validateAndAddFieldValue("string", t.getVirtualNetwork(), "virtualNetworkName", null, tmp);
