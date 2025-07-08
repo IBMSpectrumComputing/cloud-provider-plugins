@@ -40,6 +40,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.nio.file.attribute.PosixFilePermissions;
 import java.nio.file.attribute.UserPrincipal;
 import java.net.Proxy;
 import java.net.InetSocketAddress;
@@ -67,6 +68,7 @@ import com.ibm.spectrum.model.AzureRequest;
 import com.ibm.spectrum.model.AzureTemplate;
 import com.ibm.spectrum.model.AzureConfig;
 import com.microsoft.azure.credentials.AzureTokenCredentials;
+import com.microsoft.azure.credentials.MSICredentials;
 import com.microsoft.azure.management.resources.Deployment;
 import com.microsoft.azure.management.resources.DeploymentMode;
 import com.microsoft.azure.management.resources.ResourceGroup;
@@ -369,8 +371,14 @@ public class AzureUtil {
         System.clearProperty("http.proxyPort");
         System.clearProperty("https.proxyPort");
 
+        String managedIdentity = "";
         String credentialsFile = "";
+
         try {
+            managedIdentity = config.getAzureManagedIdentity();
+            if (StringUtils.isNullOrEmpty(managedIdentity)) {
+                managedIdentity = "N";
+            }
             credentialsFile = config.getAzureCredentialFile();
             if (StringUtils.isNullOrEmpty(credentialsFile)) {
                 credentialsFile = confDir + "/conf/credentials";
@@ -382,29 +390,54 @@ public class AzureUtil {
              *
              *  .withLogLevel(getAzureLogLevel(config.getLogLevel()))
              */
-            if (!proxy) {
-                azure = Azure.configure()
-                        //.withLogLevel(LogLevel.BODY)
-                        .authenticate(credFile)
-                        .withDefaultSubscription();
-            } else {
-                Proxy prox = new Proxy(Proxy.Type.HTTP, new InetSocketAddress(httpProxyHost, pPort));
-                azure = Azure.configure()
-                        .withProxy(prox)
-                        //.withLogLevel(LogLevel.BODY)
-                        .authenticate(credFile)
-                        .withDefaultSubscription();
+            if (managedIdentity.equalsIgnoreCase("Y")) {
+                log.info("Managed identity is configured, verifying the setup.");
+                if (!proxy) {
+                    azure = Azure.configure()
+                            .authenticate(new MSICredentials())
+                            .withDefaultSubscription();
+                } else {
+                    Proxy prox = new Proxy(Proxy.Type.HTTP, new InetSocketAddress(httpProxyHost, pPort));
+                    azure = Azure.configure()
+                            .withProxy(prox)
+                            .authenticate(new MSICredentials())
+                            .withDefaultSubscription();
+                }
+                log.info("Managed identity setup is successful.");
+                if (credFile.exists()) {
+                    log.warn("Managed identity is setup, kindly remove credential file from " + credFile.getAbsolutePath());
+                }
+            } else if(managedIdentity.equalsIgnoreCase("N")) {
+                if (credFile.exists()) {
+                    if (!System.getProperty("os.name").toLowerCase().contains("win")) {
+                        String perms = PosixFilePermissions.toString(Files.getPosixFilePermissions(credFile.toPath()));
+                        if (!perms.equals("rw-------")) {
+                            log.warn("Credential file permission is " + perms + ", expected 600.");
+                        }
+                    }
+                    if (!proxy) {
+                        azure = Azure.configure()
+                                //.withLogLevel(LogLevel.BODY)
+                                .authenticate(credFile)
+                                .withDefaultSubscription();
+                    } else {
+                        Proxy prox = new Proxy(Proxy.Type.HTTP, new InetSocketAddress(httpProxyHost, pPort));
+                        azure = Azure.configure()
+                                .withProxy(prox)
+                                //.withLogLevel(LogLevel.BODY)
+                                .authenticate(credFile)
+                                .withDefaultSubscription();
+                    }
+                } else {
+                    log.error("Failed to load the credentials file. Make sure that your credentials file is at the correct location" + credFile.getAbsolutePath() + "and is in valid format");
+                }
+            }
+            else {
+                log.error("Invalid value set for AZURE_MANAGED_IDENTITY parameter. Please provide either Y or N.");
             }
         } catch (Exception e) {
-            log.error("Failed to load the " + providerName + " credentials file.", e);
-
-            StringBuilder b = new StringBuilder();
-            b.append("Cannot load the credentials from the credential profiles file. ")
-            .append("Make sure that your credentials file is at the correct location (").append(confDir)
-            .append("), and is in valid format.");
-            log.error(b);
+            log.error("Azure authentication using both managed identity and credentials file failed.", e);
         }
-
         return azure;
     }
 
