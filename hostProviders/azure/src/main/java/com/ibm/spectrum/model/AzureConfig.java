@@ -40,7 +40,14 @@ public class AzureConfig {
     private String logLevel;
 
     /**
-     * Required and type is string, specify the Path of the credentials file
+     * Optional and type is string, specify Y|y|N|n as a valid value
+     * which expect managed identity to be configured manually if set to Y or y
+     */
+    @JsonProperty("AZURE_MANAGED_IDENTITY")
+    private String AzureManagedIdentity;
+
+    /**
+     * Optional and type is string, specify the Path of the credentials file
      * which has the access key and secret key information
      */
     @JsonProperty("AZURE_CREDENTIAL_FILE")
@@ -92,6 +99,7 @@ public class AzureConfig {
      */
     public AzureConfig(AzureConfig c) {
         this.logLevel = c.getLogLevel();
+        this.AzureManagedIdentity = c.getAzureManagedIdentity();
         this.AzureCredentialFile = c.getAzureCredentialFile();
         this.AzureRegion = c.getAzureRegion();
         this.AzureKeyFile = c.getAzureKeyFile();
@@ -110,6 +118,21 @@ public class AzureConfig {
      */
     public void setLogLevel(String logLevel) {
         this.logLevel = logLevel;
+    }
+
+    /**
+     * @return AzureManagedIdentity
+     */
+    public String getAzureManagedIdentity() {
+        return AzureManagedIdentity;
+    }
+
+    /**
+     * @param AzureManagedIdentity
+     *            the AzureManagedIdentity to set
+     */
+    public void setAzureManagedIdentity(String AzureManagedIdentity) {
+        this.AzureManagedIdentity = AzureManagedIdentity;
     }
 
     /**
@@ -189,6 +212,8 @@ public class AzureConfig {
         StringBuilder builder = new StringBuilder();
         builder.append("AzureConfig [logLevel=");
         builder.append(logLevel);
+        builder.append(", AzureManagedIdentity=");
+        builder.append(AzureManagedIdentity);
         builder.append(", AzureCredentialFile=");
         builder.append(AzureCredentialFile);
         builder.append(", AzureRegion=");
