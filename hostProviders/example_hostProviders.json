@@ -13,6 +13,12 @@
             "scriptPath": "resource_connector/aws"
         },
         {
+            "name": "awsv2",
+            "type": "awsProv",
+            "confPath": "resource_connector/awsv2",
+            "scriptPath": "resource_connector/awsv2"
+        },
+        {
             "name": "azure",
             "type": "azureProv",
             "confPath": "resource_connector/azure",
