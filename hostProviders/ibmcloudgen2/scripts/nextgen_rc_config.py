@@ -163,6 +163,7 @@ class NextGenTemplate:
     self.userData = ""
     self.encryptionKey = ""
     self.volumeProfile = "sdp"
+    self.extensions = {}
 
     theJson = json.loads(content)
     if "templates" not in theJson: return
@@ -200,6 +201,8 @@ class NextGenTemplate:
           self.encryptionKey = template["encryptionKey"]
         if "volumeProfile" in template:
           self.volumeProfile = template["volumeProfile"]
+        if "extensions" in template:
+          self.extensions = template["extensions"]  
 
   @property
   def maxNumber(self):
@@ -312,6 +315,13 @@ class NextGenTemplate:
   @volumeProfile.setter
   def volumeProfile(self, value):
     self._volumeProfile = value
+    
+  @property
+  def extensions(self):
+    return self._extensions
+  @extensions.setter
+  def extensions(self, value):
+    self._extensions = value
 
   def __str__(self):
    return "templateId: " + self.templateId + "\n" + \
@@ -328,7 +338,8 @@ class NextGenTemplate:
           "dedicatedHostGroupId: " + self.dedicatedHostGroupId + "\n" + \
           "encryptionKey: " + self.encryptionKey + "\n" + \
           "volumeProfile: " + self.volumeProfile + "\n" + \
-          "userData: " + self.userData 
+          "userData: " + self.userData + "\n" + \
+          "extensions: " + self.extensions
 
 def GetNextGenConfigs(templateId=""):
 

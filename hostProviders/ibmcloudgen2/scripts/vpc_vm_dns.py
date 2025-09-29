@@ -112,7 +112,25 @@ def NextGenVPCInit(_config, _template):
   config = _config
   template = _template
 
-def create_instance(templateId, resourceGroupId, vpcId, vmType, zone, dedicatedHostGroupId, catalogOffering, imageId, subnetId, securityGroupIds, sshkeyIds, encryptionKey, volumeProfile, templateUserData, userDataFile, tagValue, instanceName):
+
+def merge_instance_prototype(base, extensions):
+    """
+    Recursively merge extensions into base instance prototype
+    """
+    if not extensions:
+      return base
+        
+    for key, value in extensions.items():
+      if (key in base and isinstance(base[key], dict) and isinstance(value, dict)):
+        # Recursively merge nested dictionaries
+        merge_instance_prototype(base[key], value)
+      else:
+        # Add new key or replace non-dict value
+        base[key] = value
+    
+    return base
+
+def create_instance(templateId, resourceGroupId, vpcId, vmType, zone, dedicatedHostGroupId, catalogOffering, imageId, subnetId, securityGroupIds, sshkeyIds, encryptionKey, volumeProfile, extensions, templateUserData, userDataFile, tagValue, instanceName):
   if resourceGroupId:
     resource_group_identity_model = {}
     resource_group_identity_model['id'] = resourceGroupId
@@ -126,7 +144,7 @@ def create_instance(templateId, resourceGroupId, vpcId, vmType, zone, dedicatedH
  
   # Construct a dict representation of a SubnetIdentityById model
   subnet_identity_model = {}
-  if subnet[:3] == "crn":
+  if subnetId[:3] == "crn":
     subnet_identity_model['crn'] = subnetId
   else:
     subnet_identity_model['id'] = subnetId
@@ -176,26 +194,26 @@ def create_instance(templateId, resourceGroupId, vpcId, vmType, zone, dedicatedH
   instance_metadata_model = {}
   instance_metadata_model['enabled'] = True
   
+  #profile model
+  profile_vol_instance_model = {}
+  profile_vol_instance_model['name'] = volumeProfile
+  
+  #volume model
+  volume_instance_model = {}
+  
   if encryptionKey:
-    #Encryption 
+    #Encryption Key is available
     encryption_key_identity_model = {}
     if encryptionKey[:3] == "crn": 
       encryption_key_identity_model['crn'] = encryptionKey
     else:
       encryptionKey['id'] = encryptionKey
+    volume_instance_model['encryption_key'] = encryption_key_identity_model 
+  volume_instance_model['profile'] = profile_vol_instance_model
 
-    #profile model
-    profile_vol_instance_model = {}
-    profile_vol_instance_model['name'] = volumeProfile
-
-    #volume model
-    volume_instance_model = {}
-    volume_instance_model['encryption_key'] = encryption_key_identity_model
-    volume_instance_model['profile'] = profile_vol_instance_model
-
-    #Construct dict representation of InstanceBootVolumeProtoypebootvolume model
-    instance_boot_vol_model = {}
-    instance_boot_vol_model['volume'] = volume_instance_model
+  #Construct dict representation of InstanceBootVolumeProtoypebootvolume model
+  instance_boot_vol_model = {}
+  instance_boot_vol_model['volume'] = volume_instance_model
   
   user_data = ""
   if os.path.isfile(userDataFile):
@@ -229,9 +247,6 @@ def create_instance(templateId, resourceGroupId, vpcId, vmType, zone, dedicatedH
     instance_prototype_model['catalog_offering'] = catalog_offering_model
   else:
     instance_prototype_model['image'] = image_identity_model
-  # Encryption key is optional
-  if encryptionKey:
-    instance_prototype_model['boot_volume_attachment'] = instance_boot_vol_model
   # Dedicated Host Group is optional
   if dedicatedHostGroupId:
     instance_prototype_model['placement_target'] = dedicated_host_group_identity_model
@@ -240,12 +255,18 @@ def create_instance(templateId, resourceGroupId, vpcId, vmType, zone, dedicatedH
   instance_prototype_model['profile'] = instance_profile_identity_model
   instance_prototype_model['vpc'] = vpc_identity_model
   instance_prototype_model['primary_network_interface'] = network_interface_prototype_model
+  instance_prototype_model['boot_volume_attachment'] = instance_boot_vol_model
   instance_prototype_model['zone'] = zone_identity_model
   instance_prototype_model['metadata_service'] = instance_metadata_model
   instance_prototype_model['user_data'] = user_data  
 
+  if extensions:
+    merge_instance_prototype(instance_prototype_model, extensions)
+    logging.debug("Applied extensions to instance_prototype_model")
+
   # Set up parameter values
   instance_prototype = instance_prototype_model
+  logging.debug("instance_prototype_model: %s" % instance_prototype_model)
   response = service.create_instance(instance_prototype)
   return response
 
@@ -272,6 +293,7 @@ def create_multi_instances(args):
       vsi.sshkeyIds,
       vsi.encryptionKey,
       vsi.volumeProfile,
+      vsi.extensions,
       vsi.userData,
       userDataFile,
       tagValue,
