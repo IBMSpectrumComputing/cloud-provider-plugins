@@ -187,6 +187,9 @@ class NextGenTemplate:
           self.vmType = template["vmType"]
         if "securityGroupIds" in template:
           self.securityGroupIds = template["securityGroupIds"]
+        # variable sshkey_id is deprecated from fp16, use sshkeyIds 
+        if "sshkey_id" in template:
+          self.sshkeyIds = [template["sshkey_id"]]
         if "sshkeyIds" in template:
           self.sshkeyIds = template["sshkeyIds"]
         if "region" in template:
@@ -197,6 +200,9 @@ class NextGenTemplate:
           self.dedicatedHostGroupId = template["dedicatedHostGroupId"]
         if "userData" in template:
           self.userData = template["userData"]
+        # variable crn is deprecated from fp16, use encryptionKey 
+        if "crn" in template:
+          self.encryptionKey = template["crn"]
         if "encryptionKey" in template:
           self.encryptionKey = template["encryptionKey"]
         if "volumeProfile" in template:
