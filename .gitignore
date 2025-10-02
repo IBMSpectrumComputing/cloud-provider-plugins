@@ -1,1 +1,6 @@
 *.class
+.idea
+.DS_Store
+hostProviders/*/lib/
+hostProviders/*/target/
+__pycache__/

@@ -148,20 +148,22 @@ class NextGenConfig:
 class NextGenTemplate:
   def __init__(self, content, templateId):
     self.templateId = ""
+    self.catalogOffering = {}
     self.imageId = ""
     self.subnetId = ""
     self.vpcId = ""
-    self.rgId = ""
+    self.resourceGroupId = ""
     self.vmType = ""
-    self.securityGroupId = []
-    self.sshkey_id = ""
+    self.securityGroupIds = []
+    self.sshkeyIds = []
     self.region = ""
     self.zone = ""
     self.dedicatedHostGroupId = ""
     self.maxNumber = 0
     self.userData = ""
-    self.crn = ""
-    self.volumeProfile = "general-purpose"
+    self.encryptionKey = ""
+    self.volumeProfile = "sdp"
+    self.extensions = {}
 
     theJson = json.loads(content)
     if "templates" not in theJson: return
@@ -169,6 +171,8 @@ class NextGenTemplate:
     for template in theJson["templates"]:
       if template["templateId"] == templateId:
         self.templateId = template["templateId"]
+        if "catalogOffering" in template:
+          self.catalogOffering = template["catalogOffering"]
         if "maxNumber" in template:
           self.maxNumber = template["maxNumber"]
         if "imageId" in template:
@@ -178,13 +182,16 @@ class NextGenTemplate:
         if "vpcId" in template:
           self.vpcId = template["vpcId"]
         if "resourceGroupId" in template:
-          self.rgId = template["resourceGroupId"] 
+          self.resourceGroupId = template["resourceGroupId"] 
         if "vmType" in template:
           self.vmType = template["vmType"]
         if "securityGroupIds" in template:
-          self.securityGroupId = template["securityGroupIds"]
+          self.securityGroupIds = template["securityGroupIds"]
+        # variable sshkey_id is deprecated from fp16, use sshkeyIds 
         if "sshkey_id" in template:
-          self.sshkey_id = template["sshkey_id"]
+          self.sshkeyIds = [template["sshkey_id"]]
+        if "sshkeyIds" in template:
+          self.sshkeyIds = template["sshkeyIds"]
         if "region" in template:
           self.region = template["region"]
         if "zone" in template:
@@ -193,10 +200,15 @@ class NextGenTemplate:
           self.dedicatedHostGroupId = template["dedicatedHostGroupId"]
         if "userData" in template:
           self.userData = template["userData"]
+        # variable crn is deprecated from fp16, use encryptionKey 
         if "crn" in template:
-          self.crn = template["crn"]
+          self.encryptionKey = template["crn"]
+        if "encryptionKey" in template:
+          self.encryptionKey = template["encryptionKey"]
         if "volumeProfile" in template:
           self.volumeProfile = template["volumeProfile"]
+        if "extensions" in template:
+          self.extensions = template["extensions"]  
 
   @property
   def maxNumber(self):
@@ -206,11 +218,18 @@ class NextGenTemplate:
     self._maxNumber = value
   
   @property
-  def imageId(self):
+  def templateId(self):
     return self._templateId
-  @imageId.setter
-  def imageId(self, value):
+  @templateId.setter
+  def templateId(self, value):
     self._templateId = value
+
+  @property
+  def catalogOffering(self):
+    return self._catalogOffering
+  @catalogOffering.setter
+  def catalogOffering(self, value):
+    self._catalogOffering = value
 
   @property
   def imageId(self):
@@ -234,11 +253,11 @@ class NextGenTemplate:
     self._vpcId = value
 
   @property
-  def rgId(self):
-    return self._rgId
-  @rgId.setter
-  def rgId(self, value):
-    self._rgId = value
+  def resourceGroupId(self):
+    return self._resourceGroupId
+  @resourceGroupId.setter
+  def resourceGroupId(self, value):
+    self._resourceGroupId = value
 
   @property
   def vmType(self):
@@ -248,18 +267,18 @@ class NextGenTemplate:
     self._vmType = value
 
   @property
-  def securityGroupId(self):
-    return self._securityGroupId
-  @securityGroupId.setter
-  def securityGroupId(self, value):
-    self._securityGroupId = value
+  def securityGroupIds(self):
+    return self._securityGroupIds
+  @securityGroupIds.setter
+  def securityGroupIds(self, value):
+    self._securityGroupIds = value
 
   @property
-  def sshkey_id(self):
-    return self._sshkey_id
-  @sshkey_id.setter
-  def sshkey_id(self, value):
-    self._sshkey_id = value
+  def sshkeyIds(self):
+    return self._sshkeyIds
+  @sshkeyIds.setter
+  def sshkeyIds(self, value):
+    self._sshkeyIds = value
 
   @property
   def region(self):
@@ -290,11 +309,11 @@ class NextGenTemplate:
     self._userData = value
 
   @property
-  def crn(self):
-    return self._crn
-  @crn.setter
-  def crn(self, value):
-    self._crn = value
+  def encryptionKey(self):
+    return self._encryptionKey
+  @encryptionKey.setter
+  def encryptionKey(self, value):
+    self._encryptionKey = value
 
   @property
   def volumeProfile(self):
@@ -302,22 +321,31 @@ class NextGenTemplate:
   @volumeProfile.setter
   def volumeProfile(self, value):
     self._volumeProfile = value
+    
+  @property
+  def extensions(self):
+    return self._extensions
+  @extensions.setter
+  def extensions(self, value):
+    self._extensions = value
 
   def __str__(self):
-   return "imageId: " + self.imageId + "\n" + \
-          "templateId: " + self.templateId + "\n" + \
+   return "templateId: " + self.templateId + "\n" + \
+          "catalogOffering: " + str(self.catalogOffering) + "\n" + \
+          "imageId: " + self.imageId + "\n" + \
           "subnetId: " + self.subnetId + "\n" + \
           "vpcId: " + self.vpcId + "\n" + \
-          "rgId: " + self.rgId + "\n" + \
+          "resourceGroupId: " + self.resourceGroupId + "\n" + \
           "vmType: " + self.vmType + "\n" + \
-          "securityGroupId: " + ", ".join(self.securityGroupId) + "\n" + \
-          "sshkey_id: " + self.sshkey_id + "\n" + \
+          "sshkeyIds: " + str(self.sshkeyIds) + "\n" + \
+          "securityGroupIds: " + str(self.securityGroupIds) + "\n" + \
           "region: " + self.region + "\n" + \
           "zone: " + self.zone + "\n" + \
           "dedicatedHostGroupId: " + self.dedicatedHostGroupId + "\n" + \
-          "crn: " + self.crn + "\n" + \
+          "encryptionKey: " + self.encryptionKey + "\n" + \
           "volumeProfile: " + self.volumeProfile + "\n" + \
-          "userData: " + self.userData 
+          "userData: " + self.userData + "\n" + \
+          "extensions: " + self.extensions
 
 def GetNextGenConfigs(templateId=""):
 
