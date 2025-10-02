@@ -24,6 +24,7 @@ import time
 import os,sys
 import logging
 import random
+import traceback
 
 from nextgen_rc_config import NextGenTemplate, NextGenConfig
 from nextgen_utils import RCInstance
@@ -111,37 +112,69 @@ def NextGenVPCInit(_config, _template):
   config = _config
   template = _template
 
-def create_instance(rg, vpc, profile, zone, dedicatedHostGroupId, image, subnet, sgs, ssh_id, templateUserData, tagValue, templateId, instance_name, userDataFile, crn, volumeProfile):
+
+def merge_instance_prototype(base, extensions):
+    """
+    Recursively merge extensions into base instance prototype
+    """
+    if not extensions:
+      return base
+        
+    for key, value in extensions.items():
+      if (key in base and isinstance(base[key], dict) and isinstance(value, dict)):
+        # Recursively merge nested dictionaries
+        merge_instance_prototype(base[key], value)
+      else:
+        # Add new key or replace non-dict value
+        base[key] = value
+    
+    return base
+
+def create_instance(templateId, resourceGroupId, vpcId, vmType, zone, dedicatedHostGroupId, catalogOffering, imageId, subnetId, securityGroupIds, sshkeyIds, encryptionKey, volumeProfile, extensions, templateUserData, userDataFile, tagValue, instanceName):
+  if resourceGroupId:
+    resource_group_identity_model = {}
+    resource_group_identity_model['id'] = resourceGroupId
+  
   # Construct a dict representation of a SecurityGroupIdentityById model
   security_group_identity_model_list = []
-  for id in sgs:
+  for id in securityGroupIds:
     security_group_identity_model = {}
     security_group_identity_model['id'] = id
     security_group_identity_model_list.append(security_group_identity_model)
  
   # Construct a dict representation of a SubnetIdentityById model
   subnet_identity_model = {}
-  if subnet[:3] == "crn":
-    subnet_identity_model['crn'] = subnet
+  if subnetId[:3] == "crn":
+    subnet_identity_model['crn'] = subnetId
   else:
-    subnet_identity_model['id'] = subnet
+    subnet_identity_model['id'] = subnetId
 
   # Construct a dict representation of a DedicatedHostGroupById model
   if dedicatedHostGroupId:
     dedicated_host_group_identity_model = {}
     dedicated_host_group_identity_model['id'] = dedicatedHostGroupId
 
+  # Construct a dict representation of a CatalogOffering model
+  if catalogOffering:
+    catalog_offering_model = {}
+    catalog_offering_model['version'] = {'crn': catalogOffering['version_crn']}
+    catalog_offering_model['plan'] = {'crn': catalogOffering['plan_crn']}
+    
   # Construct a dict representation of a ImageIdentityById model
-  image_identity_model = {}
-  image_identity_model['id'] = image
+  if imageId:
+    image_identity_model = {}
+    image_identity_model['id'] = imageId
 
   # Construct a dict representation of a InstanceProfileIdentityByName model
   instance_profile_identity_model = {}
-  instance_profile_identity_model['name'] = profile
+  instance_profile_identity_model['name'] = vmType
 
   # Construct a dict representation of a KeyIdentityById model
-  key_identity_model = {}
-  key_identity_model['id'] = ssh_id
+  key_identity_model_list = []
+  for id in sshkeyIds:
+    key_identity_model = {}
+    key_identity_model['id'] = id
+    key_identity_model_list.append(key_identity_model)
 
   # Construct a dict representation of a NetworkInterfacePrototype model
   network_interface_prototype_model = {}
@@ -151,7 +184,7 @@ def create_instance(rg, vpc, profile, zone, dedicatedHostGroupId, image, subnet,
 
   # Construct a dict representation of a VPCIdentityById model
   vpc_identity_model = {}
-  vpc_identity_model['id'] = vpc
+  vpc_identity_model['id'] = vpcId
 
   # Construct a dict representation of a ZoneIdentityByName model
   zone_identity_model = {}
@@ -161,69 +194,79 @@ def create_instance(rg, vpc, profile, zone, dedicatedHostGroupId, image, subnet,
   instance_metadata_model = {}
   instance_metadata_model['enabled'] = True
   
-  if crn:
-    #Encryption 
+  #profile model
+  profile_vol_instance_model = {}
+  profile_vol_instance_model['name'] = volumeProfile
+  
+  #volume model
+  volume_instance_model = {}
+  
+  if encryptionKey:
+    #Encryption Key is available
     encryption_key_identity_model = {}
-    encryption_key_identity_model['crn'] = crn
+    if encryptionKey[:3] == "crn": 
+      encryption_key_identity_model['crn'] = encryptionKey
+    else:
+      encryptionKey['id'] = encryptionKey
+    volume_instance_model['encryption_key'] = encryption_key_identity_model 
+  volume_instance_model['profile'] = profile_vol_instance_model
 
-    #profile model
-    profile_vol_instance_model = {}
-    profile_vol_instance_model['name'] = volumeProfile
-
-    #volume model
-    volume_instance_model = {}
-    volume_instance_model['encryption_key'] = encryption_key_identity_model
-    volume_instance_model['profile'] = profile_vol_instance_model
-
-    #Construct dict representation of InstanceBootVolumeProtoypebootvolume model
-    instance_boot_vol_model = {}
-    instance_boot_vol_model['volume'] = volume_instance_model
+  #Construct dict representation of InstanceBootVolumeProtoypebootvolume model
+  instance_boot_vol_model = {}
+  instance_boot_vol_model['volume'] = volume_instance_model
+  
+  user_data = ""
+  if os.path.isfile(userDataFile):
+    f = open(userDataFile, "r");
+    user_data = f.read()
+    exportCmd = ""
+    if templateUserData and templateUserData.strip():    
+      exportCmd = "export " + templateUserData.replace(";", " ") + ";"
+    if tagValue:
+      exportCmd = exportCmd + "export rc_account=" + tagValue + ";"
+    if templateId:
+      exportCmd = exportCmd + "export template_id=" + templateId + ";"  
+    providerName = os.environ["PROVIDER_NAME"]
+    if providerName is None or len(providerName) == 0:
+      providerName = 'ibmcloudgen2'
+    exportCmd = exportCmd + "export providerName=" + providerName + ";"
+    scriptOptions = os.environ["SCRIPT_OPTIONS"]
+    if scriptOptions:
+      clusterName = scriptOptions.split("clusterName=",1)[1]
+      exportCmd = exportCmd + "export clusterName=" + clusterName + ";"
+    logging.info("exporting: " + exportCmd)
+    user_data = user_data.replace("%EXPORT_USER_DATA%", exportCmd)
 
   # Construct a dict representation of a InstancePrototypeInstanceByImage model
   instance_prototype_model = {}
-  if crn:
-    instance_prototype_model['boot_volume_attachment'] = instance_boot_vol_model
+  # Resource Group is optional
+  if resourceGroupId:
+    instance_prototype_model['resource_group'] = resource_group_identity_model
+  # Add either catalog_offering or image (mutually exclusive)
+  if catalogOffering:
+    instance_prototype_model['catalog_offering'] = catalog_offering_model
+  else:
+    instance_prototype_model['image'] = image_identity_model
+  # Dedicated Host Group is optional
   if dedicatedHostGroupId:
     instance_prototype_model['placement_target'] = dedicated_host_group_identity_model
-  instance_prototype_model['keys'] = [key_identity_model]
-  instance_prototype_model['name'] = instance_name
+  instance_prototype_model['keys'] = key_identity_model_list
+  instance_prototype_model['name'] = instanceName
   instance_prototype_model['profile'] = instance_profile_identity_model
   instance_prototype_model['vpc'] = vpc_identity_model
-  instance_prototype_model['image'] = image_identity_model
-  instance_prototype_model[
-    'primary_network_interface'] = network_interface_prototype_model
+  instance_prototype_model['primary_network_interface'] = network_interface_prototype_model
+  instance_prototype_model['boot_volume_attachment'] = instance_boot_vol_model
   instance_prototype_model['zone'] = zone_identity_model
   instance_prototype_model['metadata_service'] = instance_metadata_model
-  if rg:
-    resource_group_identity_model = {}
-    resource_group_identity_model['id'] = rg
-    instance_prototype_model['resource_group'] = resource_group_identity_model
-  
-  if os.path.isfile(userDataFile):
-     f = open(userDataFile, "r");
-     user_data = f.read()
-     exportCmd = ""
-     if templateUserData and templateUserData.strip():    
-        exportCmd = "export " + templateUserData.replace(";", " ") + ";"
-     if tagValue:
-        exportCmd = exportCmd + "export rc_account=" + tagValue + ";"
-     if templateId:
-        exportCmd = exportCmd + "export template_id=" + templateId + ";"  
-     providerName = os.environ["PROVIDER_NAME"]
-     if providerName is None or len(providerName) == 0:
-        providerName = 'ibmcloudgen2'
-     exportCmd = exportCmd + "export providerName=" + providerName + ";"
-     scriptOptions = os.environ["SCRIPT_OPTIONS"]
-     if scriptOptions:
-        clusterName = scriptOptions.split("clusterName=",1)[1]
-        exportCmd = exportCmd + "export clusterName=" + clusterName + ";"
+  instance_prototype_model['user_data'] = user_data  
 
-     logging.info("exporting: " + exportCmd)
-     user_data = user_data.replace("%EXPORT_USER_DATA%", exportCmd)
-     instance_prototype_model['user_data'] = user_data
+  if extensions:
+    merge_instance_prototype(instance_prototype_model, extensions)
+    logging.debug("Applied extensions to instance_prototype_model")
 
   # Set up parameter values
   instance_prototype = instance_prototype_model
+  logging.debug("instance_prototype_model: %s" % instance_prototype_model)
   response = service.create_instance(instance_prototype)
   return response
 
@@ -231,38 +274,76 @@ def create_multi_instances(args):
   instanceName = args[0]
   # vsi is the NextGenTemplate object
   vsi = args[1]
-  userData = args[2]
+  userDataFile = args[2]
   tagValue = args[3]
   logging.info("create_multi_instances(): instanceName=%s" % instanceName)
   newInstance = {}
   try:
     newInstance=create_instance(
-             vsi.rgId,
-             vsi.vpcId,
-             vsi.vmType,
-             vsi.zone,
-             vsi.dedicatedHostGroupId,
-             vsi.imageId,
-             vsi.subnetId,
-             vsi.securityGroupId,
-             vsi.sshkey_id,
-             vsi.userData,
-             tagValue,
-             vsi.templateId,
-             instanceName,
-             userData,
-             vsi.crn,
-             vsi.volumeProfile
-             ).get_result()
+      vsi.templateId,
+      vsi.resourceGroupId,
+      vsi.vpcId,
+      vsi.vmType,
+      vsi.zone,
+      vsi.dedicatedHostGroupId,
+      vsi.catalogOffering,
+      vsi.imageId,
+      vsi.subnetId,
+      vsi.securityGroupIds,
+      vsi.sshkeyIds,
+      vsi.encryptionKey,
+      vsi.volumeProfile,
+      vsi.extensions,
+      vsi.userData,
+      userDataFile,
+      tagValue,
+      instanceName
+      ).get_result()
 
     logging.info("\tinstance id = %s" % newInstance['id'])
 
   except Exception as e:
+    # Get full traceback
+    tb = traceback.format_exc()
+    logging.error("Full traceback:\n%s", tb)
+   
+    # Try to get IBM Cloud API specific error details
+    if hasattr(e, 'response'):
+      logging.error("API Response: %s", getattr(e, 'response', 'N/A'))
+      logging.error("API Response text: %s", getattr(e.response, 'text', 'N/A'))
+   
+    # Get all available attributes from the exception
+    exception_attrs = [attr for attr in dir(e) if not attr.startswith('_')]
+    logging.error("Exception attributes: %s", exception_attrs)
+   
+    # Try to get more specific error information
     code = getattr(e, 'code', 'N/A')
     message = getattr(e, 'message', 'N/A')
-    logging.warning("\tCreating a instance failed with status code " + str(code) + ": " + message)
-    logging.warning("\t\tinstanceName: " + instanceName)
-    newInstance['error'] = message
+   
+    # For IBM Cloud SDK errors, try to get more details
+    if hasattr(e, 'reason'):
+      logging.error("Reason: %s", e.reason)
+    if hasattr(e, 'status_code'):
+      logging.error("Status code: %s", e.status_code)
+    if hasattr(e, 'error_message'):
+      logging.error("Error message: %s", e.error_message)
+    if hasattr(e, 'errors') and e.errors:
+      logging.error("Errors list: %s", e.errors)
+      for error in e.errors:
+        logging.error("Error detail: %s", error)
+   
+    logging.error("Creating instance failed with status code %s: %s", str(code), message)
+    logging.error("Instance name: %s", instanceName)
+   
+    # Try to parse JSON error if available
+    try:
+      if hasattr(e, 'response') and hasattr(e.response, 'text'):
+        error_json = json.loads(e.response.text)
+        ogging.error("Parsed error JSON: %s", json.dumps(error_json, indent=2))
+    except:
+      pass
+
+    newInstance['error'] = f"{message} (code: {code})"
     return newInstance
 
   return newInstance
