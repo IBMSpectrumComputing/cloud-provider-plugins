@@ -39,6 +39,12 @@ def main():
      outJson = json.loads(contents)
   fp.close()
   logging.info(outJson)
+  # Depreciation warnings
+  for tmpl in outJson["templates"]:
+      if "crn" in tmpl:
+        logging.warning("Variable crn is deprecated from FP16, use encryptionKey instead")
+      if "sshkey_id" in tmpl:
+        logging.warning("Variable sshkey_id is deprecated from FP16, use sshkeyIds instead")
   print(outJson)
 
 SetRcLogger()
