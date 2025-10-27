@@ -133,63 +133,6 @@ class DBManager:
             logger.error(f"Error finding machine {machine_id}: {e}")
             return {}
         
-    # def get_all_requests(self) -> List[Dict[str, Any]]:
-    #     """Get all requests"""
-    #     try:
-    #         data = self._read_data()
-    #         return data['requests']
-    #     except Exception as e:
-    #         logger.error(f"Error getting all requests: {e}")
-    #         return []
-        
-    # def remove_request(self, request_id: str) -> bool:
-    #     """Remove a request from the database, regardless of whether it has machines or not"""
-    #     try:
-    #         data = self._read_data()
-            
-    #         # Check if request exists
-    #         request_exists = False
-    #         for request in data.get('requests', []):
-    #             if request['requestId'] == request_id:
-    #                 request_exists = True
-    #                 break
-            
-    #         if not request_exists:
-    #             logger.warning(f"Request {request_id} not found in database")
-    #             return False
-            
-    #         # Remove the request
-    #         original_count = len(data['requests'])
-    #         data['requests'] = [
-    #             req for req in data['requests'] 
-    #             if req['requestId'] != request_id
-    #         ]
-            
-    #         request_removed = (len(data['requests']) < original_count)
-            
-    #         if request_removed:
-    #             self._write_data(data)
-    #             logger.info(f"Removed request {request_id} from database")
-                
-    #             # If this was a fleet request, trigger launch template version cleanup
-    #             if request_id.startswith('fleet-'):
-    #                 try:
-    #                     # Import here to avoid circular imports
-    #                     from aws_client import AWSClient
-    #                     aws_client = AWSClient()
-    #                     aws_client._cleanup_launch_template_versions_for_fleet(request_id)
-    #                 except Exception as e:
-    #                     logger.warning(f"Failed to cleanup launch template versions for fleet {request_id}: {e}")
-                        
-    #             return True
-    #         else:
-    #             logger.warning(f"Failed to remove request {request_id} from database")
-    #             return False
-                
-    #     except Exception as e:
-    #         logger.error(f"Error removing request {request_id}: {e}")
-    #         return False
-        
     def add_machine_to_request(self, request_id: str, machine_data: Dict[str, Any]) -> bool:
         """Add a machine to an existing request"""
         try:
