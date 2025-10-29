@@ -393,11 +393,6 @@ class AWSClient:
             if self.vm_pool:
                 logger.debug("Shutting down VM pool after instance creation")
                 self.vm_pool.shutdown(wait=False)
-            
-        # Collect any instances that were created before the error
-        for result in instance_results:
-            if result['success']:
-                instance_ids.append(result['instance_id'])
 
         logger.debug(f"_create_instances completed - successful: {len(instance_ids)}, failed: {len(failed_instances)}")
         return {
