@@ -226,7 +226,7 @@ class ConfigManager:
                 return cached_result['credentials']
             
             # Execute script
-            logger.info(f"Executing credential script: {script_path}")
+            logger.debug(f"Executing credential script: {script_path}")
             result = subprocess.run(
                 [script_path],
                 capture_output=True,
