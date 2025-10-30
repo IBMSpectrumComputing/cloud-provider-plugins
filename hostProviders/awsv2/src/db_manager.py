@@ -1,3 +1,17 @@
+# Copyright International Business Machines Corp, 2025
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#    http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 import json
 import threading
 import os
@@ -51,7 +65,8 @@ class DBManager:
             logger.error(f"Error writing to database file: {e}")
 
     def create_request(self, request_id: str, template_id: str,  
-                      rc_account: str = "default") -> bool:
+                    host_allocation_type: str = "direct", rc_account: str = "default", 
+                    fleet_type: str = None) -> bool:
         """Create a new request entry"""
         try:
             data = self._read_data()
@@ -68,8 +83,12 @@ class DBManager:
                 "requestId": request_id,
                 "templateId": template_id,
                 "rc_account": rc_account,
-                "hostAllocationType": "onDemand"
+                "hostAllocationType": host_allocation_type
             }
+            
+            # Only add fleet_type if provided (for EC2 Fleet requests)
+            if fleet_type is not None:
+                new_request["fleet_type"] = fleet_type
             
             data['requests'].append(new_request)
             self._write_data(data)
@@ -113,52 +132,6 @@ class DBManager:
         except Exception as e:
             logger.error(f"Error finding machine {machine_id}: {e}")
             return {}
-        
-    def get_all_requests(self) -> List[Dict[str, Any]]:
-        """Get all requests"""
-        try:
-            data = self._read_data()
-            return data['requests']
-        except Exception as e:
-            logger.error(f"Error getting all requests: {e}")
-            return []
-        
-    def remove_request(self, request_id: str) -> bool:
-        """Remove a request from the database, regardless of whether it has machines or not"""
-        try:
-            data = self._read_data()
-            
-            # Check if request exists
-            request_exists = False
-            for request in data.get('requests', []):
-                if request['requestId'] == request_id:
-                    request_exists = True
-                    break
-            
-            if not request_exists:
-                logger.warning(f"Request {request_id} not found in database")
-                return False
-            
-            # Remove the request
-            original_count = len(data['requests'])
-            data['requests'] = [
-                req for req in data['requests'] 
-                if req['requestId'] != request_id
-            ]
-            
-            request_removed = (len(data['requests']) < original_count)
-            
-            if request_removed:
-                self._write_data(data)
-                logger.info(f"Removed request {request_id} from database")
-                return True
-            else:
-                logger.warning(f"Failed to remove request {request_id} from database")
-                return False
-                
-        except Exception as e:
-            logger.error(f"Error removing request {request_id}: {e}")
-            return False
         
     def add_machine_to_request(self, request_id: str, machine_data: Dict[str, Any]) -> bool:
         """Add a machine to an existing request"""
@@ -229,7 +202,8 @@ class DBManager:
         
     def update_machine_network_info(self, request_id: str, machine_id: str, 
                               private_ip: str, public_ip: str, 
-                              public_dns: str, name: str) -> bool:
+                              public_dns: str, name: str,
+                              lifecycle: str = None) -> bool:
         """Update machine network information without affecting status/result"""
         try:
             data = self._read_data()
@@ -247,7 +221,8 @@ class DBManager:
                                 machine['publicDnsName'] = public_dns
                             if name is not None:
                                 machine['name'] = name
-                            
+                            if lifecycle is not None:
+                                machine['lifeCycleType'] = lifecycle
                             self._write_data(data)
                             logger.info(f"Updated machine {machine_id} network info")
                             return True
@@ -309,6 +284,15 @@ class DBManager:
             if machine_removed:
                 # Clean up empty requests if this was the last machine
                 if not target_request['machines']:
+                    # If this was a fleet request, trigger launch template version cleanup
+                    if request_id.startswith('fleet-'):
+                        try:
+                            # Import here to avoid circular imports
+                            from aws_client import AWSClient
+                            aws_client = AWSClient()
+                            aws_client._cleanup_launch_template_versions_for_fleet(request_id)
+                        except Exception as e:
+                            logger.warning(f"Failed to cleanup launch template versions for fleet {request_id}: {e}")
                     data['requests'] = [
                         req for req in data['requests'] 
                         if req['requestId'] != request_id
@@ -326,6 +310,69 @@ class DBManager:
         except Exception as e:
             logger.error(f"Error removing machine from request: {e}")
             return False
+        
+    def cleanup_old_data(self, max_request_age_minutes: int = 60) -> Dict[str, int]:
+        """Simple cleanup of old empty requests and terminated machines"""
+        try:
+            data = self._read_data()
+            current_time_ms = int(datetime.now().timestamp() * 1000)
+            max_age_ms = max_request_age_minutes * 60 * 1000
+            
+            stats = {
+                'empty_requests_removed': 0,
+                'terminated_machines_removed': 0,
+                'fleet_requests_cleaned': 0
+            }
+            
+            requests_to_keep = []
+            fleet_requests_to_cleanup = []
+            
+            for request in data.get('requests', []):
+                request_age_ms = current_time_ms - request['time']
+                is_old_request = request_age_ms > max_age_ms
+                
+                # Remove terminated machines
+                original_count = len(request.get('machines', []))
+                if original_count > 0:
+                    request['machines'] = [
+                        machine for machine in request['machines'] 
+                        if machine.get('status') != 'terminated'
+                    ]
+                    stats['terminated_machines_removed'] += (original_count - len(request['machines']))
+                
+                # Remove old empty requests
+                current_count = len(request.get('machines', []))
+                if current_count == 0 and is_old_request:
+                    stats['empty_requests_removed'] += 1
+                    
+                    # Track fleet requests for additional cleanup
+                    if request['requestId'].startswith('fleet-'):
+                        fleet_requests_to_cleanup.append(request['requestId'])
+                else:
+                    requests_to_keep.append(request)
+            
+            # Update database if changes were made
+            if stats['empty_requests_removed'] > 0 or stats['terminated_machines_removed'] > 0:
+                data['requests'] = requests_to_keep
+                self._write_data(data)
+                logger.info(f"Cleanup removed {stats['empty_requests_removed']} empty requests and {stats['terminated_machines_removed']} terminated machines")
+            
+            # Cleanup launch template versions for fleet requests
+            if fleet_requests_to_cleanup:
+                try:
+                    from aws_client import AWSClient
+                    aws_client = AWSClient()
+                    for fleet_request_id in fleet_requests_to_cleanup:
+                        aws_client._cleanup_launch_template_versions_for_fleet(fleet_request_id)
+                        stats['fleet_requests_cleaned'] += 1
+                except Exception as e:
+                    logger.warning(f"Failed to cleanup launch template versions for fleet requests: {e}")
+            
+            return stats
+            
+        except Exception as e:
+            logger.error(f"Error during cleanup: {e}")
+            return {'empty_requests_removed': 0, 'terminated_machines_removed': 0, 'fleet_requests_cleaned': 0}
 
 # Global instance
 db_manager = DBManager()
