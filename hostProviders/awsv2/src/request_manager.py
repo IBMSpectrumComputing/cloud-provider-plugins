@@ -45,7 +45,7 @@ class RequestManager:
     #     logger.info(templates)     
     #     return templates
 
-    def request_machines(self, template_id: str, count: int) -> Dict[str, Any]:
+    def request_machines(self, template_id: str, count: int, rc_account: str = 'default') -> Dict[str, Any]:
         """Request to create machines using multithreading"""
         
         template_manager = TemplateManager()
@@ -53,10 +53,10 @@ class RequestManager:
         
         # Use context manager to ensure proper cleanup
         with self.aws_client.resource_context():
-            request_id = self.aws_client.create_instances(template, count)
+            request_id = self.aws_client.create_instances(template, count, rc_account)
         
         return {
-            "message": f"RequestVM succeeded from AWS. Created {count} instances.",
+            "message": f"Request instances success from aws. Created {count} instances.",
             "requestId": request_id
         }
 

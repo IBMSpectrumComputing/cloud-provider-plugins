@@ -20,7 +20,7 @@ from utils import write_output_json, read_input_json
 logger = logging.getLogger(__name__)
 
 def main():
-    logger.info("Running requestReturnMachines script")
+    logger.debug("Running requestReturnMachines script")
     try:
         input_data = read_input_json()
         logger.info(f"requestReturnMachines input: {input_data}")

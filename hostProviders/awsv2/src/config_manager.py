@@ -68,7 +68,7 @@ class ConfigManager:
                 config_data["validation_errors"] = validation_errors
             else:
                 config_data["validation_errors"] = []
-                logger.info("Configuration loaded and validated successfully")
+                logger.debug("Configuration loaded and validated successfully")
             
             return config_data
             
@@ -307,15 +307,20 @@ class ConfigManager:
 
     def get_aws_key_file(self) -> Optional[str]:
         """Get AWS key file path"""
-        return self.configs.get('AWS_KEY_FILE')
+        key_file = self.configs.get('AWS_KEY_FILE')
+        if key_file and os.path.exists(key_file):
+            return key_file
+        elif key_file:
+            logger.warning(f"AWS_KEY_FILE not found: {key_file}")
+        return None
 
     def get_spot_terminate_on_reclaim(self) -> bool:
         """Get spot instance termination setting"""
-        return self.configs.get('AWS_SPOT_TERMINATE_ON_RECLAIM', 'true').lower() == 'true'
+        return self.configs.get('AWS_SPOT_TERMINATE_ON_RECLAIM', False)
 
-    def get_instance_id_tag(self) -> str:
+    def get_instance_id_tag(self) -> bool:
         """Get instance ID tag name"""
-        return self.configs.get('AWS_TAG_InstanceID', 'InstanceID')
+        return self.configs.get('AWS_TAG_InstanceID', False)
     
     def _setup_logging(self):
         """Setup logging configuration"""

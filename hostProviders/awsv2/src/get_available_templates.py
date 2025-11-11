@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 def main():
     setup_logging()
-    logger.info("Running getAvailableTemplates script")
+    logger.debug("Running getAvailableTemplates script")
     try:
         template_manager = TemplateManager()
         templates = template_manager.get_available_templates()

@@ -35,8 +35,9 @@ def setup_logging(config_file_path=None):
             pass  # Use default if config file can't be read
 
     log_dir = os.environ.get('PRO_LSF_LOGDIR', '/tmp')
+    log_name = os.environ.get('PROVIDER_NAME', 'aws')
     hostname = socket.gethostname()
-    log_file = os.path.join(log_dir, f'aws-provider.log.{hostname}')
+    log_file = os.path.join(log_dir, f'{log_name}-provider.log.{hostname}')
     
     logging.basicConfig(
         level=getattr(logging, log_level.upper(), logging.INFO),
