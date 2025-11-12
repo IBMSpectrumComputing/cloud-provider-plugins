@@ -22,7 +22,7 @@ from datetime import datetime, timezone, timedelta
 def main():
     profile_name = os.getenv('AWS_FEDERATED_PROFILE', 'aws-federated-profile')
     
-    # TODO: Automate `aws sso login` 
+    # TODO: Automate `aws sso login --profile $AWS_FEDERATED_PROFILE` 
     
     try:
         session = boto3.Session(profile_name=profile_name)

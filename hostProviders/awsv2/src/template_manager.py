@@ -16,8 +16,15 @@ import json
 import os
 import logging
 import re
+from datetime import datetime, timedelta
 from typing import Dict, List, Any, Set
 from utils import get_config_path
+
+try:
+    import boto3
+    from botocore.exceptions import ClientError, BotoCoreError
+except ImportError:
+    boto3 = None
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +44,62 @@ class TemplateManager:
     def __init__(self):
         self.template_file = self._get_template_file()
         self.templates = self._load_and_validate_templates()
+        self.ec2_client = None
+        self.aws_region = None
+        self.aws_initialized = False
+        self._lazy_init_aws_if_needed()
+
+    def _lazy_init_aws_if_needed(self):
+        """Lazily initialize AWS client only if spot templates are present"""
+        if not self._has_spot_templates():
+            logger.debug("No spot templates found, skipping AWS client initialization")
+            return
+            
+        try:
+            from config_manager import config_manager
+            self.aws_region = config_manager.get_region()
+            
+            if boto3 is None:
+                logger.warning("boto3 not available - spot price validation will be disabled")
+                return
+                
+            # Get AWS credentials
+            credentials = config_manager.get_aws_credentials()
+            endpoint_url = config_manager.get_aws_endpoint_url()
+            
+            if credentials:
+                # Use explicit credentials
+                self.ec2_client = boto3.client(
+                    'ec2',
+                    region_name=self.aws_region,
+                    aws_access_key_id=credentials.get('aws_access_key_id'),
+                    aws_secret_access_key=credentials.get('aws_secret_access_key'),
+                    aws_session_token=credentials.get('aws_session_token'),
+                    endpoint_url=endpoint_url
+                )
+            else:
+                # Use IAM role/default credentials
+                self.ec2_client = boto3.client(
+                    'ec2',
+                    region_name=self.aws_region,
+                    endpoint_url=endpoint_url
+                )
+            
+            self.aws_initialized = True
+            logger.debug(f"AWS EC2 client initialized successfully for region: {self.aws_region}")
+            
+        except Exception as e:
+            logger.warning(f"Failed to initialize AWS client for spot price validation: {e}")
+
+    def _has_spot_templates(self) -> bool:
+        """Check if any templates have spotPrice field"""
+        if not self.templates or 'templates' not in self.templates:
+            return False
+            
+        for template in self.templates.get('templates', []):
+            if 'spotPrice' in template:
+                return True
+        return False
 
     def _get_template_file(self):
         """Get template file path"""
@@ -57,7 +120,7 @@ class TemplateManager:
             validation_errors = self._validate_templates_structure(templates_data)
             
             if validation_errors:
-                logger.error(f"Template validation errors: {validation_errors}")
+                logger.warning(f"Template validation errors: {validation_errors}")
                 templates_data["validation_errors"] = validation_errors
             else:
                 logger.debug("Templates loaded and validated successfully")
@@ -170,6 +233,12 @@ class TemplateManager:
                 errors.append(f"Template '{template_id}': subnetId must be a string")
             elif not subnet_id.strip():
                 errors.append(f"Template '{template_id}': subnetId cannot be empty")
+            # Allow comma-separated subnet IDs
+            # Each subnet should be a valid subnet ID format (starts with 'subnet-')
+            subnets = [s.strip() for s in subnet_id.split(',') if s.strip()]
+            for subnet in subnets:
+                if not subnet.startswith('subnet-'):
+                    errors.append(f"Template '{template_id}': subnet ID '{subnet}' should start with 'subnet-'")
         
         # Validate vmType
         if 'vmType' in template:
@@ -178,6 +247,13 @@ class TemplateManager:
                 errors.append(f"Template '{template_id}': vmType must be a string")
             elif not vm_type.strip():
                 errors.append(f"Template '{template_id}': vmType cannot be empty")
+            # Allow comma-separated VM types for direct requests
+            # Each VM type should follow AWS instance type naming pattern
+            vm_types = [v.strip() for v in vm_type.split(',') if v.strip()]
+            for vm in vm_types:
+                # Basic validation for AWS instance type format
+                if not re.match(r'^[a-z0-9][a-z0-9.-]+$', vm.lower()):
+                    errors.append(f"Template '{template_id}': VM type '{vm}' has invalid format")
         
         # Validate launchTemplateId
         if 'launchTemplateId' in template:
@@ -466,9 +542,102 @@ class TemplateManager:
         
         return errors
 
+    def _get_spot_price_history(self, instance_type: str) -> List[float]:
+        """
+        Get spot price history for the last hour for a specific instance type.
+        Returns list of spot prices or empty list if unavailable.
+        """
+        if not self.aws_initialized or not self.ec2_client or not instance_type:
+            return []
+        
+        try:
+            # Get spot price history for the last hour
+            end_time = datetime.utcnow()
+            start_time = end_time - timedelta(hours=1)
+            
+            response = self.ec2_client.describe_spot_price_history(
+                InstanceTypes=[instance_type],
+                ProductDescriptions=['Linux/UNIX'],
+                StartTime=start_time,
+                EndTime=end_time
+            )
+            
+            prices = [float(record['SpotPrice']) for record in response['SpotPriceHistory']]
+
+            logger.debug(f"Retrieved {len(prices)} spot price records for {instance_type}")
+            return prices
+            
+        except (ClientError, BotoCoreError) as e:
+            logger.warning(f"Failed to get spot price history for {instance_type}: {e}")
+            return []
+
+    def _is_spot_price_viable(self, template: Dict[str, Any]) -> bool:
+        """
+        Check if template's spot price is viable based on historical market prices.
+        Returns False if minimum historical price > template spot price, True otherwise.
+        """
+        if 'spotPrice' not in template:
+            return True  # Not a spot instance template
+            
+        # Lazy initialize AWS client if needed (in case templates changed)
+        if not self.aws_initialized and self._has_spot_templates():
+            self._lazy_init_aws_if_needed()
+            
+        if not self.aws_initialized:
+            logger.warning(f"AWS client not initialized, cannot validate spot price for template {template.get('templateId')}")
+            return True  # Can't validate without AWS client
+            
+        spot_price = float(template['spotPrice'])
+        instance_type = template.get('vmType')
+        
+        if not instance_type:
+            logger.warning(f"Template {template.get('templateId')} has spotPrice but no vmType, cannot validate spot price")
+            return True  # Can't validate without instance type
+        
+        historical_prices = self._get_spot_price_history(instance_type)
+        
+        if not historical_prices:
+            logger.warning(f"No historical spot price data available for {instance_type}, assuming template is viable")
+            return True  # No data available, assume it's OK
+        
+        min_historical_price = min(historical_prices)
+        
+        if spot_price < min_historical_price:
+            logger.warning(f"Template {template.get('templateId')} has spot price {spot_price} which is below minimum historical price {min_historical_price} for {instance_type}")
+            return False
+        
+        logger.debug(f"Template {template.get('templateId')} spot price {spot_price} is viable (min historical: {min_historical_price})")
+        return True
+
     def get_available_templates(self) -> Dict[str, Any]:
-        """Get all available templates"""
-        return self.templates
+        """Get all available templates, filtering out those with non-viable spot prices"""
+        if not self.templates or 'templates' not in self.templates:
+            return self.templates
+            
+        available_templates = []
+        disabled_spot_templates = []
+        
+        for template in self.templates.get('templates', []):
+            # Check if template has spot price and if it's viable
+            if 'spotPrice' in template and not self._is_spot_price_viable(template):
+                disabled_spot_templates.append(template.get('templateId', 'unknown'))
+                continue
+                
+            available_templates.append(template)
+        
+        if disabled_spot_templates:
+            logger.info(f"Disabled templates due to non-viable spot prices: {disabled_spot_templates}")
+        
+        result = self.templates.copy()
+        result['templates'] = available_templates
+        
+        # Add info about disabled spot templates if any
+        if disabled_spot_templates:
+            if 'validation_errors' not in result:
+                result['validation_errors'] = []
+            result['validation_errors'].append(f"Disabled templates with non-viable spot prices: {', '.join(disabled_spot_templates)}")
+        
+        return result
 
     def get_template(self, template_id: str) -> Dict[str, Any]:
         """Get specific template by ID"""

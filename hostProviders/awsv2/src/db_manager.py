@@ -113,6 +113,15 @@ class DBManager:
         except Exception as e:
             logger.error(f"Error getting request: {e}")
             return {}
+        
+    def get_all_requests(self) -> List[Dict[str, Any]]:
+        """Get all requests"""
+        try:
+            data = self._read_data()
+            return data['requests']
+        except Exception as e:
+            logger.error(f"Error getting all requests: {e}")
+            return []
     
     def get_request_for_machine(self, machine_id: str) -> Dict[str, Any]:
         """Get the request that contains a specific machine"""
@@ -200,10 +209,10 @@ class DBManager:
             logger.error(f"Error updating machine status: {e}")
             return False
         
-    def update_machine_network_info(self, request_id: str, machine_id: str, 
-                              private_ip: str, public_ip: str, 
-                              public_dns: str, name: str,
-                              lifecycle: str = None) -> bool:
+    def update_machine_info(self, request_id: str, machine_id: str, 
+                            private_ip: str, public_ip: str, 
+                            public_dns: str, name: str,
+                            lifecycle: str = None, tagInstanceId = False) -> bool:
         """Update machine network information without affecting status/result"""
         try:
             data = self._read_data()
@@ -223,8 +232,10 @@ class DBManager:
                                 machine['name'] = name
                             if lifecycle is not None:
                                 machine['lifeCycleType'] = lifecycle
+                            if tagInstanceId is not False:
+                                machine['tagInstanceId'] = tagInstanceId
                             self._write_data(data)
-                            logger.info(f"Updated machine {machine_id} network info")
+                            logger.debug(f"Updated machine {machine_id} info")
                             return True
             
             logger.warning(f"Machine {machine_id} not found in request {request_id}")
