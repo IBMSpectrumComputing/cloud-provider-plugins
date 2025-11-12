@@ -21,7 +21,7 @@ from utils import write_output_json, read_input_json
 logger = logging.getLogger(__name__)
 
 def main():
-    logger.info("Running getRequestStatus script")
+    logger.debug("Running getRequestStatus script")
     try:
         input_data = read_input_json()
         logger.info(f"getRequestStatus input: {input_data}")

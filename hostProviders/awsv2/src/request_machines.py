@@ -20,17 +20,19 @@ from utils import write_output_json, read_input_json
 logger = logging.getLogger(__name__)
 
 def main():
-    logger.info("Running requestMachines script")
+    logger.debug("Running requestMachines script")
     try:
         input_data = read_input_json()
         logger.info(f"requestMachines input: {input_data}")
         template = input_data['template']
+        rc_account = input_data.get('rc_account', 'default')
         
         request_manager = RequestManager()
         with request_manager.resource_context():
             output_data = request_manager.request_machines(
                 template['templateId'], 
-                template['machineCount']
+                template['machineCount'],
+                rc_account
             )
         
         write_output_json(output_data)

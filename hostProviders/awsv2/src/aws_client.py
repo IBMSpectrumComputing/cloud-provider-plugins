@@ -16,7 +16,8 @@ import boto3
 import time
 import os
 import threading
-from typing import Dict, List, Any
+import random
+from typing import Dict, List, Any, Optional
 from botocore.exceptions import ClientError
 import logging
 import json
@@ -83,6 +84,20 @@ class AWSClient:
                 self.ec2 = self.session.client('ec2', endpoint_url=endpoint_url)
                 self.ec2_resource = self.session.resource('ec2', endpoint_url=endpoint_url)
                 logger.debug("EC2 clients reconfigured with custom endpoint")
+                
+            # Get AWS key file configuration
+            self.aws_key_file = config_manager.get_aws_key_file()
+            logger.debug(f"AWS_KEY_FILE configured: {self.aws_key_file}")
+            
+            # Get spot instance termination reclaim configuration
+            self.spot_terminate_on_reclaim = config_manager.get_spot_terminate_on_reclaim()
+            logger.debug(f"AWS_SPOT_TERMINATE_ON_RECLAIM configured: {self.spot_terminate_on_reclaim}")
+            if self.spot_terminate_on_reclaim:
+                self.start_spot_reclaim_monitor()
+        
+            # Get InstanceID tagging configuration
+            self.instance_id_tag_enabled = config_manager.get_instance_id_tag()
+            logger.debug(f"AWS_TAG_InstanceID enabled: {self.instance_id_tag_enabled}")
             
             self._test_connection()
             logger.debug("AWS connection test completed successfully")
@@ -254,7 +269,7 @@ class AWSClient:
             logger.debug("No VM thread pool to clean up")
 
 
-    def create_instances(self, template: Dict, count: int) -> str:
+    def create_instances(self, template: Dict, count: int, rc_account: str = 'default') -> str:
             """Create EC2 instances using multithreading"""
             logger.debug(f"Starting create_instances for template {template.get('templateId')}, count: {count}")
             # Check credentials once at the beginning of bulk operation
@@ -265,19 +280,19 @@ class AWSClient:
                 if template.get('fleetRole'):
                     logger.info(f"Using Spot Fleet for template {template.get('templateId')}")
                     logger.debug(f"Spot Fleet configuration found: fleetRole={template.get('fleetRole')}")
-                    result = self._create_spot_fleet(template, count)
+                    result = self._create_spot_fleet(template, count, rc_account)
                 
                 # Check for EC2 Fleet configuration - simple boolean check
                 elif template.get('ec2FleetConfig'):
                     logger.info(f"Using EC2 Fleet for template {template.get('templateId')}")
                     logger.debug(f"EC2 Fleet configuration found: {template.get('ec2FleetConfig')}")
-                    result = self._create_ec2_fleet(template, count)
+                    result = self._create_ec2_fleet(template, count, rc_account)
                 
                 # Basic template or launch template
                 else:
                     logger.info(f"Using Basic configuration for template {template.get('templateId')}")
                     logger.debug("Using basic instance creation method")
-                    result = self._create_instances(template, count)
+                    result = self._create_instances(template, count, rc_account)
                 
                 logger.info(f"Result: {result}")
                 logger.debug(f"Creation result details: success={result.get('success')}, request_id={result.get('request_id')}")
@@ -296,7 +311,7 @@ class AWSClient:
                         'successful': len(result['instance_ids']),
                         'failed': len(result.get('failed_instances', []))
                     }
-                    logger.info(f"Request {request_id}: Created {len(result['instance_ids'])}/{count} instances")
+                    logger.info(f"Request {request_id}: Creating {count} instances/slots")
                     logger.debug(f"Request {request_id} stored in memory cache")
                     return request_id
                 else:
@@ -314,7 +329,7 @@ class AWSClient:
                 logger.debug(f"create_instances stack trace:", exc_info=True)
                 raise Exception(f"Instance creation failed: {str(e)}")
  
-    def _create_instances(self, template: Dict, count: int) -> Dict[str, Any]:
+    def _create_instances(self, template: Dict, count: int, rc_account: str = 'default') -> Dict[str, Any]:
         """Create instances"""
         logger.debug(f"Starting _create_instances for {count} instances")
         
@@ -326,7 +341,8 @@ class AWSClient:
         db_manager.create_request(
             request_id=request_id,
             template_id=template['templateId'],
-            host_allocation_type="direct"
+            host_allocation_type="direct",
+            rc_account=rc_account
         )
         logger.debug(f"Created request {request_id} in database")
         
@@ -346,7 +362,7 @@ class AWSClient:
                 logger.debug(f"Using thread pool for {count} instance creations")
                 futures = []
                 for i in range(count):
-                    future = self.vm_pool.submit(self._create_single_instance, template, i, request_id)
+                    future = self.vm_pool.submit(self._create_single_instance, template, i, request_id, rc_account)
                     futures.append(future)
                     logger.debug(f"Submitted future for instance {i}")
                 
@@ -369,7 +385,7 @@ class AWSClient:
                 logger.warning("Using sequential instance creation (thread pool not available). Starting sequential instance creation")
                 for i in range(count):
                     logger.debug(f"Sequentially creating instance {i+1}/{count}")
-                    result = self._create_single_instance(template, i, request_id)
+                    result = self._create_single_instance(template, i, request_id, rc_account)
                     instance_results.append(result)
                     
                     if result['success']:
@@ -402,7 +418,7 @@ class AWSClient:
             'failed_instances': failed_instances
         }
                         
-    def _create_single_instance(self, template: Dict, instance_index: int, request_id: str) -> Dict[str, Any]:
+    def _create_single_instance(self, template: Dict, instance_index: int, request_id: str, rc_account: str = 'default') -> Dict[str, Any]:
         """Create a single EC2 instance (thread-safe)"""
         logger.debug(f"Starting _create_single_instance for index {instance_index}, request {request_id}")
         try:                  
@@ -431,9 +447,25 @@ class AWSClient:
             logger.debug("Building network interfaces...")
             network_interfaces = self._build_network_interfaces(template)
             logger.debug("Building user data...")
-            user_data = self._build_user_data(template)
+            user_data = self._build_user_data(template, rc_account)
             logger.debug("Building instance tags...")
-            instance_tags = self._build_instance_tags(template)
+            instance_tags = self._build_instance_tags(template, rc_account)
+            
+            # Handle multiple VM types for direct instance creation (not using launch template)
+            vm_type = template.get('vmType')
+            selected_vm_type = None
+            if vm_type and ',' in vm_type and not launch_template_id:
+                # Multiple VM types available - choose one randomly
+                vm_types = [v.strip() for v in vm_type.split(',') if v.strip()]
+                if vm_types:
+                    selected_vm_type = random.choice(vm_types)
+                    logger.debug(f"Multiple VM types available: {vm_types}, chosen: {selected_vm_type}")
+                else:
+                    logger.warning("No valid VM types found in vmType string")
+            elif vm_type:
+                # Single VM type
+                selected_vm_type = vm_type
+                logger.debug(f"Single VM type: {selected_vm_type}")
             
             # Build IAM instance profile
             iam_profile = {}
@@ -486,13 +518,15 @@ class AWSClient:
                     instances_params['SubnetId'] = subnet_id
                     logger.debug(f"Using SubnetId: {subnet_id}")
                         
-            if template.get('keyName'):
+            key_name = self._get_key_name(template)
+            if key_name:
                 instances_params['KeyName'] = template['keyName']
                 logger.debug(f"Using key pair: {template['keyName']}")
             
-            if template.get('vmType'):
-                instances_params['InstanceType'] = template['vmType']
-                logger.debug(f"Using Instance Type: {template['vmType']}")
+            # Use selected VM type (could be from multiple choices or single)
+            if selected_vm_type:
+                instances_params['InstanceType'] = selected_vm_type
+                logger.debug(f"Using Instance Type: {selected_vm_type}")
                 
             if template.get('ebsOptimized'):
                 instances_params['EbsOptimized'] = template['ebsOptimized']
@@ -571,7 +605,7 @@ class AWSClient:
                 'instance_index': instance_index
             }
 
-    def _build_user_data(self, template: Dict) -> str:
+    def _build_user_data(self, template: Dict, rc_account: str = 'default') -> str:
         """Build user data from template - reusable across all instance types"""
         logger.debug("Building user data from template...")
         user_data = ""
@@ -597,8 +631,13 @@ class AWSClient:
                         
                         # Always include template ID for identification
                         if template.get('templateId'):
-                            exports.append(f"export LSF_TEMPLATE_ID={template.get('templateId')}")
+                            exports.append(f"export templateID={template.get('templateId')}")
                             logger.debug(f"Added template ID export: {template.get('templateId')}")
+                            
+                        # Add rc_account 
+                        if rc_account:
+                            exports.append(f"export rc_account={rc_account}")
+                            logger.debug(f"Added rc_account export: {rc_account}")
                         
                         # Combine and replace placeholder
                         if exports:
@@ -609,7 +648,7 @@ class AWSClient:
                             # If no exports, remove the placeholder line
                             user_data = user_data.replace("%EXPORT_USER_DATA%", "")
                             logger.debug("Removed EXPORT_USER_DATA placeholder (no exports)")
-                            
+                                            
             except Exception as e:
                 logger.warning(f"Failed to read user data file {user_data_file}: {e}")
                 logger.debug(f"User data file read error stack trace:", exc_info=True)
@@ -619,10 +658,10 @@ class AWSClient:
         logger.debug(f"Final user data length: {len(user_data)} characters")
         return user_data
 
-    def _get_encoded_user_data(self, template: Dict) -> str:
+    def _get_encoded_user_data(self, template: Dict, rc_account: str = 'default') -> str:
         """Get base64 encoded user data for fleet requests"""
         logger.debug("Getting base64 encoded user data...")
-        user_data = self._build_user_data(template)
+        user_data = self._build_user_data(template, rc_account)
         if user_data:
             encoded = base64.b64encode(user_data.encode('utf-8')).decode('utf-8')
             logger.debug(f"User data encoded, length: {len(encoded)}")
@@ -630,7 +669,7 @@ class AWSClient:
         logger.debug("No user data to encode")
         return ""
     
-    def _build_instance_tags(self, template: Dict) -> List[Dict]:
+    def _build_instance_tags(self, template: Dict, rc_account: str = 'default') -> List[Dict]:
         """Build instance tags from template - reusable across all instance types"""
         logger.debug("Building instance tags from template...")
         instance_tags = []
@@ -657,27 +696,70 @@ class AWSClient:
                 else:
                     logger.warning(f"Invalid tag format '{pair}', expected 'Key=Value'")
         
+        # Add RC_ACCOUNT tag
+        rc_account_tag_exists = any(tag.get('Key') == 'RC_ACCOUNT' for tag in instance_tags)
+        if not rc_account_tag_exists:
+            instance_tags.append({'Key': 'RC_ACCOUNT', 'Value': rc_account})
+            logger.debug(f"Added tag: RC_ACCOUNT={rc_account}")
+        
         logger.debug(f"Built {len(instance_tags)} instance tags")
         return instance_tags
+    
+    def _tag_instance_with_instance_id(self, instance_id: str):
+        """InstanceId tagging to ec2 instances and ebs volumes"""
+            
+        try:
+            # Tag instance
+            self.ec2.create_tags(
+                Resources=[instance_id], 
+                Tags=[{'Key': 'InstanceID', 'Value': instance_id}]
+            )
+            
+            # Tag volumes
+            response = self.ec2.describe_volumes(
+                Filters=[{'Name': 'attachment.instance-id', 'Values': [instance_id]}]
+            )
+            
+            volume_ids = [vol['VolumeId'] for vol in response.get('Volumes', [])]
+            if volume_ids:
+                self.ec2.create_tags(Resources=volume_ids, Tags=[{'Key': 'InstanceID', 'Value': instance_id}])
+                
+        except ClientError as e:
+            logger.error(f"Tagging failed for {instance_id}: {e.response['Error']['Code']}")
+        except Exception as e:
+            logger.error(f"Unexpected tagging error for {instance_id}: {e}")
     
     def _build_network_config(self, template: Dict) -> Dict[str, Any]:
         """Build network configuration from template - reusable across all instance types"""
         logger.debug("Building network configuration...")
-        network_config = {}
         
         subnet_id = template.get('subnetId')
         security_groups = template.get('securityGroupIds', [])
         
-        if subnet_id:
-            network_config = {
-                'SubnetId': subnet_id,
-                'Groups': security_groups
-            }
-            logger.debug(f"Network config: SubnetId={subnet_id}, Groups={security_groups}")
-        else:
+        # Early return if no subnet
+        if not subnet_id:
             logger.debug("No subnet ID found in template")
+            return {}
         
-        return network_config
+        # Parse and validate subnets
+        subnets = [s.strip() for s in subnet_id.split(',') if s.strip()]
+        if not subnets:
+            logger.warning("No valid subnets found in subnetId string")
+            return {}
+        
+        # Select subnet (random for multiple, single for one)
+        chosen_subnet = random.choice(subnets) if len(subnets) > 1 else subnets[0]
+        
+        # Log appropriately based on count
+        if len(subnets) > 1:
+            logger.debug(f"Multiple subnets available: {subnets}, chosen: {chosen_subnet}")
+        else:
+            logger.debug(f"Single subnet config: SubnetId={chosen_subnet}, Groups={security_groups}")
+        
+        return {
+            'SubnetId': chosen_subnet,
+            'Groups': security_groups
+        }
 
     def _build_network_interfaces(self, template: Dict) -> List[Dict]:
         """Build network interfaces configuration - for direct instance creation"""
@@ -703,6 +785,31 @@ class AWSClient:
         
         return network_interfaces
 
+    def _get_key_name(self, template: Dict) -> Optional[str]:
+        """Get key name to use - template takes precedence, then AWS_KEY_FILE"""
+        # First check if template specifies a keyName
+        if template.get('keyName'):
+            return template['keyName']
+        
+        # Then check if AWS_KEY_FILE is configured
+        if self.aws_key_file:
+            return self._get_key_name_from_file(self.aws_key_file)
+        
+        # No key specified
+        return None
+
+    def _get_key_name_from_file(self, key_file_path: str) -> str:
+        """Extract key name from key file path"""
+        try:
+            # Common pattern: keyname.pem -> keyname
+            base_name = os.path.basename(key_file_path)
+            key_name = os.path.splitext(base_name)[0]
+            logger.debug(f"Extracted key name '{key_name}' from file: {key_file_path}")
+            return key_name
+        except Exception as e:
+            logger.warning(f"Failed to extract key name from {key_file_path}: {e}. Using default.")
+            return "lsf-key"
+        
     def _get_common_instance_params(self, template: Dict) -> Dict[str, Any]:
         """Get common instance parameters used across all creation methods"""
         logger.debug("Getting common instance parameters...")
@@ -732,6 +839,7 @@ class AWSClient:
             "nthreads": common_params['nthreads'],
             "rcAccount": "default",
             "lifeCycleType": "",
+            "tagInstanceId": False,
             "reqId": request_id,
             "retId": "",
             "message": "Instance creation initiated",
@@ -757,7 +865,7 @@ class AWSClient:
         logger.debug(f"Complete machine data: {base_data}")
         return base_data
 
-    def _create_spot_fleet(self, template: Dict, count: int) -> Dict[str, Any]:
+    def _create_spot_fleet(self, template: Dict, count: int, rc_account: str = 'default') -> Dict[str, Any]:
         """Create Spot Fleet using template parameters (not external config file)"""
         logger.debug(f"Creating Spot Fleet for {count} instances")
         try:
@@ -777,7 +885,7 @@ class AWSClient:
                     'TargetCapacity': count,
                     'IamFleetRole': fleet_role,
                     'AllocationStrategy': template.get('allocationStrategy', 'lowestPrice'),
-                    'LaunchSpecifications': self._build_spot_fleet_launch_specs(template)
+                    'LaunchSpecifications': self._build_spot_fleet_launch_specs(template, rc_account)
                 }
             }
             logger.debug("Spot Fleet config structure built")
@@ -798,7 +906,8 @@ class AWSClient:
             db_manager.create_request(
                 request_id=fleet_id,
                 template_id=template['templateId'],
-                host_allocation_type="spotFleet"
+                host_allocation_type="spotFleet",
+                rc_account=rc_account
             )
             logger.debug(f"Created request {fleet_id} in database")
             
@@ -838,23 +947,27 @@ class AWSClient:
                 'failed_instances': []
             }
 
-    def _build_spot_fleet_launch_specs(self, template: Dict) -> List[Dict]:
+    def _build_spot_fleet_launch_specs(self, template: Dict, rc_account: str = 'default') -> List[Dict]:
         """Build Spot Fleet launch specifications from template parameters"""
         logger.debug("Building Spot Fleet launch specifications...")
         # Use helper functions
         network_config = self._build_network_config(template)
-        instance_tags = self._build_instance_tags(template)
-        encoded_user_data = self._get_encoded_user_data(template)
+        instance_tags = self._build_instance_tags(template, rc_account)
+        encoded_user_data = self._get_encoded_user_data(template, rc_account)
         
         launch_spec = {
             'ImageId': template.get('imageId', ''),
             'InstanceType': template.get('vmType', ''),
-            'KeyName': template.get('keyName'),
             'UserData': encoded_user_data
         }
         logger.debug("Base launch spec built")
-        
+
         # Add optional parameters
+        key_name = self._get_key_name(template)
+        if key_name:
+            launch_spec['KeyName'] = key_name
+            logger.debug(f"Using key pair for Spot Fleet: {key_name}")
+            
         if network_config.get('SubnetId'):
             launch_spec['NetworkInterfaces'] = [{
                 'DeviceIndex': 0,
@@ -875,73 +988,79 @@ class AWSClient:
         logger.debug(f"Final launch spec: {launch_spec}")
         return [launch_spec]
 
-    def _poll_spot_fleet_instances(self, fleet_id: str) -> List[str]:
+    def _poll_spot_fleet_instances(self, fleet_id: str, max_attempts: int = 3, base_delay: int = 2) -> List[str]:
         """Poll Spot Fleet to launch instances and return instance IDs"""
-        logger.debug(f"Polling Spot Fleet instances for {fleet_id}")
-        try:
-            # Describe spot fleet instances
-            response = self.ec2.describe_spot_fleet_instances(
-                SpotFleetRequestId=fleet_id
-            )
-            logger.debug(f"Spot Fleet describe response received")
-            
-            active_instances = response.get('ActiveInstances', [])
-            active_instance_ids = [instance['InstanceId'] for instance in active_instances]
-            logger.debug(f"Found {len(active_instance_ids)} active instances in Spot Fleet")
-            
-            if active_instance_ids:
-                logger.info(f"Spot Fleet {fleet_id} launched instances: {active_instance_ids}")
+        logger.debug(f"Polling Spot Fleet instances for {fleet_id} with {max_attempts} attempts")
+        
+        for attempt in range(max_attempts):
+            try:
+                # Describe spot fleet instances
+                response = self.ec2.describe_spot_fleet_instances(
+                    SpotFleetRequestId=fleet_id
+                )
+                logger.debug(f"Spot Fleet describe response received on attempt {attempt + 1}")
+                
+                active_instances = response.get('ActiveInstances', [])
+                active_instance_ids = [instance['InstanceId'] for instance in active_instances]
+                logger.debug(f"Found {len(active_instance_ids)} active instances in Spot Fleet")
+                
+                if active_instance_ids:
+                    logger.info(f"Spot Fleet {fleet_id} launched instances: {active_instance_ids} on attempt {attempt + 1}")
 
-                # Get existing instance IDs from database
-                request_data = db_manager.get_request(fleet_id)
-                existing_instance_ids = set()
-                if request_data and 'machines' in request_data:
-                    existing_instance_ids = {machine['machineId'] for machine in request_data['machines'] if 'machineId' in machine}
-                logger.debug(f"Found {len(existing_instance_ids)} existing instances in database")
-                
-                # Find new instances
-                new_instance_ids = set(active_instance_ids) - existing_instance_ids
-                logger.debug(f"Found {len(new_instance_ids)} new instances not in database")
-                
-                if new_instance_ids:
-                    logger.info(f"Found {len(new_instance_ids)} new instances for Spot Fleet {fleet_id}")
+                    # Get existing instance IDs from database
+                    request_data = db_manager.get_request(fleet_id)
+                    existing_instance_ids = set()
+                    if request_data and 'machines' in request_data:
+                        existing_instance_ids = {machine['machineId'] for machine in request_data['machines'] if 'machineId' in machine}
+                    logger.debug(f"Found {len(existing_instance_ids)} existing instances in database")
                     
-                    # Get template attributes from request data
-                    template_id = request_data.get('templateId', 'unknown') if request_data else 'unknown'
-                    template_manager = TemplateManager()
-                    template = template_manager.get_template(template_id)
-                    logger.debug(f"Retrieved template {template_id} for new instances")
+                    # Find new instances
+                    new_instance_ids = set(active_instance_ids) - existing_instance_ids
+                    logger.debug(f"Found {len(new_instance_ids)} new instances not in database")
                     
-                    for instance_id in new_instance_ids:
-                        # Use helper for machine data creation
-                        machine_data = self._create_machine_data(
-                            instance_id=instance_id,
-                            template=template,
-                            request_id=fleet_id,
-                            name=f"host-{instance_id}"
-                        )
-                        db_manager.add_machine_to_request(fleet_id, machine_data)
-                        logger.info(f"Added new Spot Fleet instance {instance_id} to database")
-                
-                return active_instance_ids
-            else:
-                logger.debug(f"No active instances found for Spot Fleet {fleet_id}")
+                    if new_instance_ids:
+                        logger.info(f"Found {len(new_instance_ids)} new instances for Spot Fleet {fleet_id}")
+                        
+                        # Get template attributes from request data
+                        template_id = request_data.get('templateId', 'unknown') if request_data else 'unknown'
+                        template_manager = TemplateManager()
+                        template = template_manager.get_template(template_id)
+                        logger.debug(f"Retrieved template {template_id} for new instances")
+                        
+                        for instance_id in new_instance_ids:
+                            # Use helper for machine data creation
+                            machine_data = self._create_machine_data(
+                                instance_id=instance_id,
+                                template=template,
+                                request_id=fleet_id,
+                                name=f"host-{instance_id}"
+                            )
+                            db_manager.add_machine_to_request(fleet_id, machine_data)
+                            logger.info(f"Added new Spot Fleet instance {instance_id} to database")
+                    
+                    return active_instance_ids
+                else:
+                    if attempt < max_attempts - 1:
+                        delay = base_delay * (2 ** attempt)
+                        logger.debug(f"No active instances found for Spot Fleet {fleet_id} on attempt {attempt + 1}, waiting {delay}s")
+                        time.sleep(delay)
+                    else:
+                        logger.debug(f"No active instances found for Spot Fleet {fleet_id} after {max_attempts} attempts")
+                        return []
+                    
+            except ClientError as e:
+                if e.response['Error']['Code'] == 'InvalidSpotFleetRequestId.NotFound':
+                    logger.warning(f"Spot Fleet {fleet_id} not found yet")
+                else:
+                    logger.error(f"Error describing spot fleet instances: {e}")
+                    logger.debug(f"Spot Fleet polling ClientError - code: {e.response['Error']['Code']}, message: {e.response['Error']['Message']}")
                 return []
-                
-        except ClientError as e:
-            if e.response['Error']['Code'] == 'InvalidSpotFleetRequestId.NotFound':
-                logger.warning(f"Spot Fleet {fleet_id} not found yet")
-            else:
-                logger.error(f"Error describing spot fleet instances: {e}")
-                logger.debug(f"Spot Fleet polling ClientError - code: {e.response['Error']['Code']}, message: {e.response['Error']['Message']}")
-            return []
-
-  
-    def _create_ec2_fleet(self, template: Dict, count: int) -> Dict[str, Any]:
+              
+    def _create_ec2_fleet(self, template: Dict, count: int, rc_account: str = 'default') -> Dict[str, Any]:
         """Create instances using EC2 Fleet API - supports both instant and request types"""
         logger.debug(f"Creating EC2 Fleet for {count} instances")
         try:
-            logger.info(f"Creating EC2 Fleet for template {template.get('templateId')}")
+            logger.debug(f"Creating EC2 Fleet for template {template.get('templateId')}")
             
             # Load configuration
             fleet_config = self._load_ec2_fleet_config(template)
@@ -949,10 +1068,10 @@ class AWSClient:
             
             # Determine fleet type from configuration
             fleet_type = fleet_config.get('Type', 'instant')  # Default to instant if not specified
-            logger.info(f"EC2 Fleet type: {fleet_type}")
+            logger.debug(f"EC2 Fleet type: {fleet_type}")
             
             # Get encoded user data from user_data.sh script
-            encoded_user_data = self._get_encoded_user_data(template)
+            encoded_user_data = self._get_encoded_user_data(template, rc_account)
             logger.debug("Encoded user data retrieved")
             
             # Calculate slot-based capacity
@@ -963,7 +1082,7 @@ class AWSClient:
             total_slots = min(count, max_number * ncpus)
             logger.debug(f"Capacity calculation - max_number: {max_number}, ncpus: {ncpus}, total_slots: {total_slots}")
             
-            # Handle on-demand ratio
+            # Handle ondemand ratio
             ratio = template.get('onDemandTargetCapacityRatio')
             if ratio is not None:
                 try:
@@ -973,11 +1092,11 @@ class AWSClient:
                 except (ValueError, TypeError):
                     on_demand_slots = 0
                     spot_slots = total_slots
-                    logger.warning(f"Invalid on-demand ratio: {ratio}, using all spot instances")
+                    logger.warning(f"Invalid ondemand ratio: {ratio}, using all spot instances")
             else:
                 on_demand_slots = 0
                 spot_slots = total_slots
-                logger.debug("No on-demand ratio specified, using all spot instances")
+                logger.debug("No ondemand ratio specified, using all spot instances")
             
             # Replace placeholder variables in fleet config
             if 'TargetCapacitySpecification' in fleet_config:
@@ -987,10 +1106,10 @@ class AWSClient:
                 target_spec['OnDemandTargetCapacity'] = on_demand_slots  
                 target_spec['SpotTargetCapacity'] = spot_slots
                 
-                logger.info(f"Set fleet capacity: Total={total_slots}, OnDemand={on_demand_slots}, Spot={spot_slots}")
+                logger.info(f"Set fleet capacity (slot): Total={total_slots}, OnDemand={on_demand_slots}, Spot={spot_slots}")
             
             # Use helper functions for tags
-            instance_tags = self._build_instance_tags(template)
+            instance_tags = self._build_instance_tags(template, rc_account)
             
             # Add fleet-level tags only (instance tags must be in LaunchTemplate)
             if instance_tags:
@@ -1002,10 +1121,10 @@ class AWSClient:
             
             # ALWAYS create temporary launch template versions with all overrides
             if 'LaunchTemplateConfigs' in fleet_config:
-                logger.info("Creating temporary launch template versions for EC2 Fleet with all overrides")
-                success = self._create_temp_launch_template_versions(fleet_config, template, encoded_user_data)
+                logger.debug("Creating temporary launch template versions for EC2 Fleet with all overrides")
+                success = self._create_temp_launch_template_versions(fleet_config, template, encoded_user_data, rc_account)
                 if success:
-                    logger.info("Successfully created temporary launch template versions with all overrides")
+                    logger.debug("Successfully created temporary launch template versions with all overrides")
                 else:
                     logger.warning("Failed to create temporary launch template versions")
             
@@ -1014,13 +1133,14 @@ class AWSClient:
             response = self.ec2.create_fleet(**fleet_config)
             
             fleet_id = response.get('FleetId')
-            logger.info(f"EC2 Fleet created: {fleet_id}, type: {fleet_type}")
+            logger.debug(f"EC2 Fleet created: {fleet_id}, type: {fleet_type}")
             
             # Create request in database with fleet type information
             db_manager.create_request(
                 request_id=fleet_id,
                 template_id=template['templateId'],
                 host_allocation_type="ec2Fleet",
+                rc_account=rc_account,
                 fleet_type=fleet_type  # Store fleet type for later reference
             )
             logger.debug(f"Created request {fleet_id} in database with fleet type: {fleet_type}")
@@ -1031,7 +1151,7 @@ class AWSClient:
             
             if fleet_type == 'instant':
                 # Instant fleet - instances are returned immediately
-                logger.info("Processing instant fleet instances immediately")
+                logger.debug("Processing instant fleet instances immediately")
                 for instance in response.get('Instances', []):
                     instance_ids = instance.get('InstanceIds', [])
                     successful_instances.extend(instance_ids)
@@ -1046,7 +1166,7 @@ class AWSClient:
                             name=f"host-{instance_id}"
                         )
                         db_manager.add_machine_to_request(fleet_id, machine_data)
-                        logger.info(f"Added instant fleet instance {instance_id} to database")
+                        logger.debug(f"Added instant fleet instance {instance_id} to database")
                 
                 # Handle any errors in the response
                 for error in response.get('Errors', []):
@@ -1059,7 +1179,7 @@ class AWSClient:
             else:  # request fleet
                 # Request fleet - instances will be launched asynchronously
                 # We don't get instances immediately, so we'll poll for them later
-                logger.info("Request fleet created - instances will be launched asynchronously")
+                logger.debug("Request fleet created - instances will be launched asynchronously")
                 # No instances to process immediately for request fleets
             
             logger.debug(f"EC2 Fleet creation completed - successful_instances: {len(successful_instances)}, failed_instances: {len(failed_instances)}")
@@ -1096,7 +1216,7 @@ class AWSClient:
                 'failed_instances': []
             }
 
-    def _create_temp_launch_template_versions(self, fleet_config: Dict, template: Dict, encoded_user_data: str) -> bool:
+    def _create_temp_launch_template_versions(self, fleet_config: Dict, template: Dict, encoded_user_data: str, rc_account: str = 'default') -> bool:
         """
         ALWAYS create temporary launch template versions with all template overrides including user data
         
@@ -1187,7 +1307,8 @@ class AWSClient:
                         logger.debug(f"Applied instance type override: {template['vmType']} for config {i}")
                     
                     # 4. Apply key pair override if specified
-                    if template.get('keyName'):
+                    key_name = self._get_key_name(template)
+                    if key_name:
                         version_data['KeyName'] = template['keyName']
                         logger.debug(f"Applied key pair override: {template['keyName']} for config {i}")
                     
@@ -1205,7 +1326,7 @@ class AWSClient:
                         logger.debug(f"Applied EBS optimized override: {template['ebsOptimized']} for config {i}")
                     
                     # 7. Apply instance tags
-                    instance_tags = self._build_instance_tags(template)
+                    instance_tags = self._build_instance_tags(template, rc_account)
                     if instance_tags:
                         version_data['TagSpecifications'] = [
                             {
@@ -1227,7 +1348,7 @@ class AWSClient:
                     }
                     
                     # Create the new version of the launch template
-                    logger.info(f"Creating new version of launch template for config {i}")
+                    logger.debug(f"Creating new version of launch template for config {i}")
                     create_response = self.ec2.create_launch_template_version(**create_version_kwargs)
                     new_version_number = create_response['LaunchTemplateVersion']['VersionNumber']
                     
@@ -1240,7 +1361,7 @@ class AWSClient:
                         if 'LaunchTemplateName' in spec:
                             del spec['LaunchTemplateName']
                     
-                    logger.info(f"Successfully created version {new_version_number} of launch template for config {i}")
+                    logger.debug(f"Successfully created version {new_version_number} of launch template for config {i}")
                     successful_creations += 1
                     
                 except ClientError as e:
@@ -1253,11 +1374,11 @@ class AWSClient:
                     logger.debug(f"Launch template version creation stack trace:", exc_info=True)
                     continue
         
-        logger.info(f"Successfully created temporary versions for {successful_creations}/{total_configs} LaunchTemplateConfigs")
+        logger.debug(f"Successfully created temporary versions for {successful_creations}/{total_configs} LaunchTemplateConfigs")
         return successful_creations > 0
 
     def _load_ec2_fleet_config(self, template: Dict) -> Dict[str, Any]:
-        """Load EC2 Fleet configuration from file - reuse existing config loading pattern"""
+        """Load EC2 Fleet configuration from file - support both valid JSON and legacy format with placeholders"""
         logger.debug("Loading EC2 Fleet configuration...")
         ec2_fleet_config_path = template.get('ec2FleetConfig')
         if not ec2_fleet_config_path:
@@ -1277,18 +1398,56 @@ class AWSClient:
         
         try:
             with open(ec2_fleet_config_path, 'r') as f:
-                config = json.load(f)
-                logger.debug("EC2 Fleet configuration loaded successfully")
+                content = f.read()
+                logger.debug(f"Raw config file content length: {len(content)}")
+            
+            # First, try to parse as regular JSON
+            try:
+                config = json.loads(content)
+                logger.debug("EC2 Fleet configuration loaded as valid JSON")
                 return config
-        except json.JSONDecodeError as e:
-            logger.error(f"Invalid JSON in EC2 Fleet configuration: {e}")
-            raise ValueError(f"Invalid JSON in EC2 Fleet configuration: {e}")
+            except json.JSONDecodeError as json_error:
+                logger.warning(
+                    f"EC2 Fleet configuration file is not valid JSON, attempting legacy format parsing: {json_error}. "
+                    f"Note: The use of variables like $LSF_TOTAL_TARGET_CAPACITY, $LSF_ONDEMAND_TARGET_CAPACITY, "
+                    f"and $LSF_SPOT_TARGET_CAPACITY in EC2 Fleet configuration file is DEPRECATED. "
+                    f"Please remove these variables and use valid JSON format as they are no longer supported."
+                )
+                
+                # For legacy format, replace the placeholder variables with 0 since they will be overridden anyway
+                # This handles the specific placeholders mentioned in the issue
+                legacy_placeholders = {
+                    '$LSF_TOTAL_TARGET_CAPACITY': '0',
+                    '$LSF_ONDEMAND_TARGET_CAPACITY': '0', 
+                    '$LSF_SPOT_TARGET_CAPACITY': '0'
+                }
+                
+                cleaned_content = content
+                for placeholder, replacement in legacy_placeholders.items():
+                    if placeholder in cleaned_content:
+                        logger.debug(f"Replacing legacy placeholder {placeholder} with {replacement}")
+                        cleaned_content = cleaned_content.replace(placeholder, replacement)
+                
+                # Try parsing the cleaned content
+                try:
+                    config = json.loads(cleaned_content)
+                    logger.debug("EC2 Fleet configuration loaded from legacy format")
+                    return config
+                except json.JSONDecodeError as second_error:
+                    logger.error(f"Failed to parse even after cleaning legacy placeholders: {second_error}")
+                    logger.debug(f"Cleaned content that failed to parse: {cleaned_content}")
+                    raise ValueError(f"Invalid JSON in EC2 Fleet configuration even after legacy placeholder cleaning: {second_error}")
+                    
+        except Exception as e:
+            logger.error(f"Unexpected error loading EC2 Fleet configuration: {e}")
+            logger.debug(f"Config loading stack trace:", exc_info=True)
+            raise
 
     def _cleanup_launch_template_versions_for_fleet(self, request_id: str):
         """Clean up temporary launch template versions created for an EC2 Fleet request"""
         logger.debug(f"Starting launch template version cleanup for fleet: {request_id}")
         try:
-            logger.info(f"Cleaning up launch template versions for fleet request: {request_id}")
+            logger.debug(f"Cleaning up launch template versions for fleet request: {request_id}")
             
             # Get the request data to find template information
             request_data = db_manager.get_request(request_id)
@@ -1337,7 +1496,7 @@ class AWSClient:
                                         LaunchTemplateId=lt_id,
                                         Versions=[str(version_num)]
                                     )
-                                    logger.info(f"Deleted launch template version {version_num} from {lt_name} (was for template {template_id})")
+                                    logger.debug(f"Deleted launch template version {version_num} from {lt_name} (was for template {template_id})")
                                     versions_cleaned += 1
                                 except ClientError as e:
                                     if e.response['Error']['Code'] == 'InvalidLaunchTemplateVersion.NotFound':
@@ -1355,78 +1514,84 @@ class AWSClient:
                 logger.error(f"Failed to describe launch templates for cleanup: {e}")
                 logger.debug(f"Launch template description ClientError - code: {e.response['Error']['Code']}, message: {e.response['Error']['Message']}")
             
-            logger.info(f"Cleaned up {versions_cleaned} launch template versions for fleet request {request_id}")
+            logger.debug(f"Cleaned up {versions_cleaned} launch template versions for fleet request {request_id}")
             
         except Exception as e:
             logger.error(f"Error during launch template version cleanup for fleet {request_id}: {e}")
             logger.debug(f"Launch template cleanup stack trace:", exc_info=True)
             
-    def _poll_ec2_fleet_instances(self, fleet_id: str) -> List[str]:
+    def _poll_ec2_fleet_instances(self, fleet_id: str, max_attempts: int = 3, base_delay: int = 2) -> List[str]:
         """Poll EC2 Fleet to get launched instances - works for request fleets only"""
-        logger.debug(f"Polling EC2 Fleet instances for {fleet_id}")
-        try:
-            # This method is only called for request fleets, so we don't need fleet type checks
-            logger.debug(f"Polling request fleet instances for {fleet_id}")
-            response = self.ec2.describe_fleet_instances(FleetId=fleet_id)
-            logger.debug("EC2 Fleet describe response received")
-            
-            active_instances = response.get('ActiveInstances', [])
-            active_instance_ids = [instance['InstanceId'] for instance in active_instances]
-            logger.debug(f"Found {len(active_instance_ids)} active instances in EC2 Fleet")
-            
-            if active_instance_ids:
-                logger.info(f"EC2 Request Fleet {fleet_id} launched instances: {active_instance_ids}")
+        logger.debug(f"Polling EC2 Fleet instances for {fleet_id} with {max_attempts} attempts")
+        
+        for attempt in range(max_attempts):
+            try:
+                # This method is only called for request fleets, so we don't need fleet type checks
+                response = self.ec2.describe_fleet_instances(FleetId=fleet_id)
+                logger.debug(f"EC2 Fleet describe response received on attempt {attempt + 1}")    
+                
+                active_instances = response.get('ActiveInstances', [])
+                active_instance_ids = [instance['InstanceId'] for instance in active_instances]
+                logger.debug(f"Found {len(active_instance_ids)} active instances in EC2 Fleet")
+                
+                if active_instance_ids:
+                    logger.info(f"EC2 Request Fleet {fleet_id} launched instances: {active_instance_ids} on attempt {attempt + 1}")
 
-                # Get existing instance IDs from database
-                request_data = db_manager.get_request(fleet_id)
-                existing_instance_ids = set()
-                if request_data and 'machines' in request_data:
-                    existing_instance_ids = {machine['machineId'] for machine in request_data['machines'] if 'machineId' in machine}
-                logger.debug(f"Found {len(existing_instance_ids)} existing instances in database")
-                
-                # Find new instances
-                new_instance_ids = set(active_instance_ids) - existing_instance_ids
-                logger.debug(f"Found {len(new_instance_ids)} new instances not in database")
-                
-                if new_instance_ids:
-                    logger.info(f"Found {len(new_instance_ids)} new instances for EC2 Request Fleet {fleet_id}")
+                    # Get existing instance IDs from database
+                    request_data = db_manager.get_request(fleet_id)
+                    existing_instance_ids = set()
+                    if request_data and 'machines' in request_data:
+                        existing_instance_ids = {machine['machineId'] for machine in request_data['machines'] if 'machineId' in machine}
+                    logger.debug(f"Found {len(existing_instance_ids)} existing instances in database")
                     
-                    # Get template attributes from request data
-                    template_id = request_data.get('templateId', 'unknown')
-                    template_manager = TemplateManager()
-                    template = template_manager.get_template(template_id)
-                    logger.debug(f"Retrieved template {template_id} for new instances")
+                    # Find new instances
+                    new_instance_ids = set(active_instance_ids) - existing_instance_ids
+                    logger.debug(f"Found {len(new_instance_ids)} new instances not in database")
                     
-                    for instance_id in new_instance_ids:
-                        # Use helper for machine data creation
-                        machine_data = self._create_machine_data(
-                            instance_id=instance_id,
-                            template=template,
-                            request_id=fleet_id,
-                            name=f"host-{instance_id}"
-                        )
-                        db_manager.add_machine_to_request(fleet_id, machine_data)
-                        logger.info(f"Added new EC2 Request Fleet instance {instance_id} to database")
-                
-                return active_instance_ids
-            else:
-                logger.debug(f"No active instances found for EC2 Request Fleet {fleet_id}")
+                    if new_instance_ids:
+                        logger.debug(f"Found {len(new_instance_ids)} new instances for EC2 Request Fleet {fleet_id}")
+                        
+                        # Get template attributes from request data
+                        template_id = request_data.get('templateId', 'unknown')
+                        template_manager = TemplateManager()
+                        template = template_manager.get_template(template_id)
+                        logger.debug(f"Retrieved template {template_id} for new instances")
+                        
+                        for instance_id in new_instance_ids:
+                            # Use helper for machine data creation
+                            machine_data = self._create_machine_data(
+                                instance_id=instance_id,
+                                template=template,
+                                request_id=fleet_id,
+                                name=f"host-{instance_id}"
+                            )
+                            db_manager.add_machine_to_request(fleet_id, machine_data)
+                            logger.debug(f"Added new EC2 Request Fleet instance {instance_id} to database")
+                    
+                    return active_instance_ids
+                else:
+                    if attempt < max_attempts - 1:
+                        delay = base_delay * (2 ** attempt)
+                        logger.debug(f"No active instances found for EC2 Request Fleet {fleet_id} on attempt {attempt + 1}, waiting {delay}s")
+                        time.sleep(delay)
+                    else:
+                        logger.debug(f"No instances found for EC2 Fleet {fleet_id} after {max_attempts} attempts")
+                        return []
+
+            except ClientError as e:
+                if e.response['Error']['Code'] == 'InvalidFleetId.NotFound':
+                    logger.warning(f"EC2 Fleet {fleet_id} not found yet")
+                elif e.response['Error']['Code'] == 'Unsupported':
+                    # This should not happen since we only call this for request fleets
+                    logger.error(f"Unexpected: DescribeFleetInstances not supported for fleet {fleet_id} - this should be a request fleet")
+                else:
+                    logger.error(f"Error describing EC2 fleet instances: {e}")
+                    logger.debug(f"EC2 Fleet polling ClientError - code: {e.response['Error']['Code']}, message: {e.response['Error']['Message']}")
                 return []
-                
-        except ClientError as e:
-            if e.response['Error']['Code'] == 'InvalidFleetId.NotFound':
-                logger.warning(f"EC2 Fleet {fleet_id} not found yet")
-            elif e.response['Error']['Code'] == 'Unsupported':
-                # This should not happen since we only call this for request fleets
-                logger.error(f"Unexpected: DescribeFleetInstances not supported for fleet {fleet_id} - this should be a request fleet")
-            else:
-                logger.error(f"Error describing EC2 fleet instances: {e}")
-                logger.debug(f"EC2 Fleet polling ClientError - code: {e.response['Error']['Code']}, message: {e.response['Error']['Message']}")
-            return []
-        except Exception as e:
-            logger.error(f"Unexpected error polling EC2 fleet instances: {e}")
-            logger.debug(f"EC2 Fleet polling stack trace:", exc_info=True)
-            return []
+            except Exception as e:
+                logger.error(f"Unexpected error polling EC2 fleet instances: {e}")
+                logger.debug(f"EC2 Fleet polling stack trace:", exc_info=True)
+                return []
        
     def terminate_instances(self, instance_ids: List[str]) -> str:
         """Terminate EC2 instances using multithreading"""
@@ -1638,7 +1803,7 @@ class AWSClient:
         return terminated
 
     def get_instance_details(self, instance_id: str, retries: int = 2) -> Dict[str, Any]:
-        """Get instance details with retry logic for unknown states"""
+        """Get instance details with retry logic"""
         logger.debug(f"get_instance_details called for {instance_id} with {retries} retries")
         for attempt in range(retries + 1):
             try:
@@ -1648,18 +1813,26 @@ class AWSClient:
                 logger.debug(f"Instance details: {instance.meta.data}")
                 state = instance.state['Name']
                 logger.debug(f"Instance {instance_id} state: {state}")
-                lifecycle = 'on-demand'  # Default to on-demand
+                
+                # Get state reason if available
+                state_reason = None
+                if hasattr(instance, 'state_reason') and instance.state_reason:
+                    state_reason = {
+                        'Code': instance.state_reason.get('Code'),
+                        'Message': instance.state_reason.get('Message')
+                    }
+                    logger.debug(f"Instance {instance_id} state_reason: {state_reason}")
+                
+                lifecycle = 'ondemand'
                 try:
-                    # Check if instance_lifecycle attribute exists and has a value
                     if hasattr(instance, 'instance_lifecycle') and instance.instance_lifecycle:
                         lifecycle = instance.instance_lifecycle
-                    # Alternative check for spot instances
                     elif instance.instance_type.startswith('spot') or getattr(instance, 'spot_instance_request_id', None):
                         lifecycle = 'spot'
                     logger.debug(f"Instance {instance_id} lifecycle: {lifecycle}")
                 except Exception as e:
                     logger.debug(f"Could not determine lifecycle for {instance_id}: {e}")
-                    lifecycle = 'on-demand'
+                    lifecycle = 'ondemand'
                 
                 if state != 'unknown' or attempt == retries:
                     result = {
@@ -1669,7 +1842,8 @@ class AWSClient:
                         'name': instance.private_dns_name,
                         'publicDnsName': instance.public_dns_name,
                         'launchtime': instance.launch_time.timestamp() if instance.launch_time else None,
-                        'lifecycle': lifecycle
+                        'lifecycle': lifecycle,
+                        'state_reason': state_reason
                     }
                     logger.debug(f"Returning instance details: {result}")
                     return result
@@ -1682,42 +1856,35 @@ class AWSClient:
             except ClientError as e:
                 if attempt == retries:
                     logger.error(f"Failed to get instance details after {retries} retries: {e}")
-                    logger.debug(f"Final ClientError - code: {e.response['Error']['Code']}, message: {e.response['Error']['Message']}")
                     return {
-                        'state': 'unknown'
+                        'state': 'unknown',
+                        'state_reason': None
                     }
                 wait_time = 2 ** attempt
                 logger.debug(f"ClientError, waiting {wait_time}s before retry")
                 time.sleep(wait_time)
         
-        logger.debug(f"get_instance_details returning unknown state for {instance_id}")
         return {
-            'state': 'unknown'
+            'state': 'unknown',
+            'state_reason': None
         }
-        
+
     def get_instance_details_bulk(self, instance_ids: List[str], chunk_size: int = 100, max_retries: int = 2) -> Dict[str, Dict[str, Any]]:
-        """Get details for multiple instances with built-in retry logic"""
-        logger.debug(f"get_instance_details_bulk called for {len(instance_ids)} instances, chunk_size={chunk_size}, max_retries={max_retries}")
+        """Get details for multiple instances - enhanced with state_reason"""
+        logger.debug(f"get_instance_details_bulk called for {len(instance_ids)} instances")
         if not instance_ids:
-            logger.debug("No instance IDs provided to get_instance_details_bulk")
             return {}
         
         result = {}
         instances_to_process = set(instance_ids)
-        logger.debug(f"Instances to process: {instances_to_process}")
         
-        # Process with retries
         for attempt in range(max_retries + 1):
             if not instances_to_process:
-                logger.debug("No more instances to process")
                 break
                 
-            logger.debug(f"Bulk attempt {attempt + 1}/{max_retries + 1}, instances remaining: {len(instances_to_process)}")
-            # Process in chunks
             current_batch = list(instances_to_process)
             for i in range(0, len(current_batch), chunk_size):
                 chunk = current_batch[i:i + chunk_size]
-                logger.debug(f"Processing chunk {i//chunk_size + 1}, size: {len(chunk)}")
                 
                 try:
                     instances = self.ec2_resource.instances.filter(InstanceIds=chunk)
@@ -1726,17 +1893,24 @@ class AWSClient:
                     for instance in instances:
                         found_instance_ids.add(instance.id)
                         state = instance.state['Name']
-                        lifecycle = 'on-demand'  # Default to on-demand
+                        
+                        # Get state reason
+                        state_reason = None
+                        if hasattr(instance, 'state_reason') and instance.state_reason:
+                            state_reason = {
+                                'Code': instance.state_reason.get('Code'),
+                                'Message': instance.state_reason.get('Message')
+                            }
+                        
+                        lifecycle = 'ondemand'
                         try:
                             if hasattr(instance, 'instance_lifecycle') and instance.instance_lifecycle:
                                 lifecycle = instance.instance_lifecycle
                             elif instance.instance_type.startswith('spot') or getattr(instance, 'spot_instance_request_id', None):
                                 lifecycle = 'spot'
-                            logger.debug(f"Instance {instance.id} lifecycle: {lifecycle}")
-                        except Exception as e:
-                            logger.debug(f"Could not determine lifecycle for {instance.id}: {e}")
-                            lifecycle = 'on-demand'
-                        logger.debug(f"Instance details: {instance.meta.data}")
+                        except Exception:
+                            lifecycle = 'ondemand'
+                        
                         result[instance.id] = {
                             'state': state,
                             'privateIpAddress': instance.private_ip_address,
@@ -1745,18 +1919,15 @@ class AWSClient:
                             'publicDnsName': instance.public_dns_name,
                             'launchtime': instance.launch_time.timestamp() if instance.launch_time else None,
                             'lifecycle': lifecycle,
+                            'state_reason': state_reason,
                             'source': f'bulk-attempt-{attempt}'
                         }
-                        logger.debug(f"Result dictionary contents: {result}")
                         
-                        # Remove from processing if not unknown (or if final attempt)
                         if state != 'unknown' or attempt == max_retries:
                             instances_to_process.discard(instance.id)
-                            logger.debug(f"Removed {instance.id} from processing (state: {state})")
                     
-                    # Handle missing instances (terminated)
+                    # Handle missing instances
                     missing_in_chunk = set(chunk) - found_instance_ids
-                    logger.debug(f"Missing instances in chunk: {missing_in_chunk}")
                     for missing_id in missing_in_chunk:
                         result[missing_id] = {
                             'state': 'terminated',
@@ -1766,40 +1937,24 @@ class AWSClient:
                             'publicDnsName': None,
                             'launchtime': None,
                             'lifecycle': None,
+                            'state_reason': None,
                             'source': f'bulk-missing-attempt-{attempt}'
                         }
                         instances_to_process.discard(missing_id)
-                        logger.debug(f"Marked missing instance {missing_id} as terminated")
                         
                 except ClientError as e:
                     logger.warning(f"Bulk attempt {attempt} failed for chunk: {e}")
-                    logger.debug(f"Bulk ClientError - code: {e.response['Error']['Code']}, message: {e.response['Error']['Message']}")
-                    # Keep these instances in processing for retry
             
-            # Exponential backoff before next retry
             if instances_to_process and attempt < max_retries:
                 sleep_time = 2 ** attempt
-                logger.debug(f"Waiting {sleep_time}s before bulk retry {attempt + 1}")
                 time.sleep(sleep_time)
         
-        # Final fallback for any remaining instances
+        # Final fallback
         if instances_to_process:
-            logger.debug(f"Final fallback for {len(instances_to_process)} instances")
             for instance_id in instances_to_process:
                 individual_result = self.get_instance_details(instance_id, retries=0)
-                result[instance_id] = {
-                    'state': individual_result['state'],
-                    'privateIpAddress': individual_result['privateIpAddress'],
-                    'publicIpAddress': individual_result['publicIpAddress'],
-                    'name': individual_result['name'],
-                    'publicDnsName': individual_result['publicDnsName'],
-                    'launchtime': individual_result['launchtime'],
-                    'lifecycle': individual_result.get('lifecycle', 'unknown'),
-                    'source': 'individual-fallback'
-                }
-                logger.debug(f"Fallback result for {instance_id}: {individual_result['state']}")
+                result[instance_id] = individual_result
         
-        logger.debug(f"get_instance_details_bulk returning {len(result)} results")
         return result
 
     def get_request_status(self, request_id: str) -> Dict[str, Any]:
@@ -1808,7 +1963,7 @@ class AWSClient:
         
         # For spot fleet requests (sfr) - poll for instances before checking status
         if request_id.startswith("sfr-"):
-            logger.debug(f"Polling Spot Fleet instances for {request_id}")
+            logger.debug(f"Polling Spot Fleet instances for {request_id} with retry")
             self._poll_spot_fleet_instances(request_id)
             
         # For EC2 fleet requests (fleet-) - poll only for request type fleets
@@ -1819,7 +1974,7 @@ class AWSClient:
             if request_data:
                 fleet_type = request_data.get('fleet_type', 'instant')
                 if fleet_type == 'request':
-                    logger.debug(f"Polling EC2 Request Fleet instances for {request_id}")
+                    logger.debug(f"Polling EC2 Request Fleet instances for {request_id} with retry")
                     self._poll_ec2_fleet_instances(request_id)
                 else:
                     logger.debug(f"Skipping polling for EC2 Instant Fleet {request_id}")
@@ -1972,6 +2127,16 @@ class AWSClient:
                     elif current_aws_state == 'running':
                         updated_machine['result'] = 'succeed'
                         updated_machine['message'] = 'Instance running successfully'
+                        
+                        # Add InstanceId tagging for running instances (post-provision process)
+                        if self.instance_id_tag_enabled:
+                            # Check if we haven't already tagged this instance
+                            if not machine.get('tagInstanceId', False):
+                                logger.debug(f"Instance {instance_id} is running, adding InstanceId tag")
+                                self._tag_instance_with_instance_id(instance_id)
+                                # Mark as tagged to avoid duplicate attempts
+                                updated_machine['tagInstanceId'] = True
+                                
                         # Update machine properties if available
                         if instance_details.get('name'):
                             updated_machine['name'] = instance_details['name']
@@ -2044,17 +2209,18 @@ class AWSClient:
                     updated_machine['message'],
                     updated_machine.get('retId', '')
                 )
-                # Also update the network-specific fields if they changed
+                # Also update the fields if they changed
                 if network_info_changed or lifecycle_changed:
-                    logger.debug(f"Updating network info for instance {instance_id}")
-                    db_manager.update_machine_network_info(
+                    logger.debug(f"Updating  info for instance {instance_id}")
+                    db_manager.update_machine_info(
                         updated_machine.get('reqId', ''),
                         instance_id,
                         updated_machine.get('privateIpAddress'),
                         updated_machine.get('publicIpAddress'),
                         updated_machine.get('publicDnsName'),
                         updated_machine.get('name'),
-                        updated_machine.get('lifeCycleType')
+                        updated_machine.get('lifeCycleType'),
+                        updated_machine.get('tagInstanceId')
                     )
             
             updated_machines.append(updated_machine)
@@ -2114,3 +2280,136 @@ class AWSClient:
         
         logger.debug("Cleanup interval not reached, skipping cleanup")
         return {'empty_requests_removed': 0, 'terminated_machines_removed': 0}
+    
+    def start_spot_reclaim_monitor(self):
+        """Start background monitoring for Spot instance reclaims"""
+        logger.debug("Starting Spot instance reclaim monitor")
+        
+        def monitor_loop():
+            while True:
+                try:
+                    self._check_and_terminate_spot_reclaims()
+                    # Check every 2 minutes to catch the 2-minute warning window
+                    time.sleep(120)
+                except Exception as e:
+                    logger.error(f"Error in Spot reclaim monitor: {e}")
+                    time.sleep(60)
+        
+        monitor_thread = threading.Thread(
+            target=monitor_loop,
+            name='spot_reclaim_monitor',
+            daemon=True
+        )
+        monitor_thread.start()
+
+    def _check_and_terminate_spot_reclaims(self):
+        """Main method to check for Spot reclaims and terminate instances"""
+        logger.debug("Checking for Spot instance reclaims...")
+        
+        try:
+            # Get all active instances from database
+            active_instances = self._get_active_spot_instances()
+            
+            if not active_instances:
+                return
+            
+            instances_to_terminate = []
+            
+            for instance_id in active_instances:
+                if self._has_spot_termination_notice(instance_id):
+                    logger.info(f"Spot instance {instance_id} has reclaim notice, marking for termination")
+                    instances_to_terminate.append(instance_id)
+            
+            # Terminate all instances with reclaim notices
+            if instances_to_terminate:
+                logger.info(f"Terminating {len(instances_to_terminate)} Spot instances with reclaim notices")
+                termination_request_id = self.terminate_instances(instances_to_terminate)
+                
+                # Update status for tracking
+                for instance_id in instances_to_terminate:
+                    self._update_machine_reclaim_status(instance_id, termination_request_id)
+                    
+        except Exception as e:
+            logger.error(f"Error in Spot reclaim check: {e}")
+
+    def _get_active_spot_instances(self) -> List[str]:
+        """Get all active Spot instances from database"""
+        active_instances = []
+        
+        try:
+            # Get all running instances
+            all_requests = db_manager.get_all_requests()
+            
+            for request in all_requests:
+                if 'machines' in request:
+                    for machine in request['machines']:
+                        if (machine.get('status') in ['running', 'pending'] and 
+                            machine.get('machineId')):
+                            # Check if it's a Spot instance via EC2 API
+                            instance_id = machine['machineId']
+                            details = self.get_instance_details(instance_id)
+                            if details.get('lifecycle') == 'spot':
+                                active_instances.append(instance_id)
+            
+            logger.debug(f"Found {len(active_instances)} active Spot instances")
+            return active_instances
+            
+        except Exception as e:
+            logger.error(f"Error getting active Spot instances: {e}")
+            return []
+
+    def _has_spot_termination_notice(self, instance_id: str) -> bool:
+        """Check if Spot instance has termination notice using EC2 API"""
+        try:
+            # Use describe_instances to check for termination indicators
+            response = self.ec2.describe_instances(InstanceIds=[instance_id])
+            
+            if not response['Reservations']:
+                return False
+                
+            instance = response['Reservations'][0]['Instances'][0]
+            
+            # Check state transition reason for Spot termination
+            state_reason = instance.get('StateTransitionReason', '')
+            logger.debug(f"Instance {instance_id} state reason: {state_reason}")
+            
+            # Look for Spot termination indicators
+            spot_indicators = [
+                'spot instance termination',
+                'server.spotinstanceterminationnotice', 
+                'marked for termination',
+                'instance-termination'
+            ]
+            
+            if any(indicator in state_reason.lower() for indicator in spot_indicators):
+                logger.info(f"Instance {instance_id} has Spot termination notice: {state_reason}")
+                return True
+                
+            return False
+            
+        except ClientError as e:
+            if e.response['Error']['Code'] == 'InvalidInstanceID.NotFound':
+                logger.debug(f"Instance {instance_id} not found")
+            else:
+                logger.error(f"Error checking termination notice for {instance_id}: {e}")
+            return False
+        except Exception as e:
+            logger.error(f"Unexpected error checking termination notice for {instance_id}: {e}")
+            return False
+
+    def _update_machine_reclaim_status(self, instance_id: str, termination_request_id: str):
+        """Update machine status to reflect reclaim termination"""
+        try:
+            machine_info = db_manager.get_request_for_machine(instance_id)
+            if machine_info and machine_info.get('request'):
+                db_manager.update_machine_status(
+                    machine_info['request']['requestId'],
+                    instance_id,
+                    'shutting-down',
+                    'executing',
+                    'Spot instance terminated due to AWS reclaim notice',
+                    termination_request_id
+                )
+                logger.debug(f"Updated reclaim status for instance {instance_id}")
+        except Exception as e:
+            logger.error(f"Error updating reclaim status for {instance_id}: {e}")
