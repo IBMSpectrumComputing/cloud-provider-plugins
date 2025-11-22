@@ -2290,18 +2290,33 @@ public class AWSClient {
             log.trace("Start in class AWSClient in method applyPostCreationBehaviorForInstance with parameters: newInstances: "
                       + newInstance);
         }
-        if (newInstance != null) {
-            List<Tag> tagsToBeCreated = createTagsForInstanceCreation(newInstance,
-            		                    usedTemplate.getInstanceTags(),
-                                        awsRequest.getTagValue());
-            AWSClient.tagInstance(newInstance,tagsToBeCreated);
-            AWSClient.tagEbsVolumes(newInstance, tagsToBeCreated);
 
+        // lsf-L3-tracker/issues/1490 - to avoid NullPointerException
+        if (newInstance == null) {
+            log.warn("Cannot apply post-creation behavior: newInstance is null");
+            return;
         }
+        
+        if (awsRequest == null) {
+            log.warn("Cannot apply post-creation behavior: awsRequest is null");
+            return;
+        }
+        
+        // usedTemplate might return null if it's been disabled or changed
+        if (usedTemplate == null) {
+            log.warn("Cannot apply post-creation behavior: usedTemplate is null");
+            return;
+        }
+
+        List<Tag> tagsToBeCreated = createTagsForInstanceCreation(newInstance,
+                                    usedTemplate.getInstanceTags(),
+                                    awsRequest.getTagValue());
+        AWSClient.tagInstance(newInstance,tagsToBeCreated);
+        AWSClient.tagEbsVolumes(newInstance, tagsToBeCreated);
+
         if (log.isTraceEnabled()) {
             log.trace("End in class AWSClient in method applyPostCreationBehaviorForInstance with return: void: ");
         }
-
     }
 
     private static void tagInstance(Instance instance, List<Tag> tagsToBeCreated) {
