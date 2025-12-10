@@ -848,7 +848,7 @@ public class AWSClient {
 
     /**
      * @Title: deleteCloudVM
-     * @Description: delete instances from cloud
+     * @Description: delete instances from cloud in batches to avoid API limits
      * @param instIdsToDelete
      * @return
      */
@@ -858,17 +858,48 @@ public class AWSClient {
                       + instIdsToDelete);
         }
 
-        List<InstanceStateChange> stateChanges = new ArrayList<InstanceStateChange> ();
+        List<InstanceStateChange> stateChanges = new ArrayList<InstanceStateChange>();
+        
+        if (CollectionUtils.isNullOrEmpty(instIdsToDelete)) {
+            return stateChanges;
+        }
 
         AmazonEC2 ec2 = getEC2Client();
 
-        // delete eligible instances
-        TerminateInstancesRequest req = new TerminateInstancesRequest(
-            instIdsToDelete);
-        TerminateInstancesResult rs = ec2.terminateInstances(req);
-        if(rs.getTerminatingInstances() != null) {
-            log.debug("Add terminated instances to stateChanges" + rs.getTerminatingInstances());
-            stateChanges.addAll(rs.getTerminatingInstances());
+        // lsf-L3-tracker/issues/1490 - to avoid ResourceCountExceeded error
+        // API has a limit on the max instances termination in a single call, process in batches
+        int batchSize = 500; // Conservative batch size to stay well under AWS limits of 1000
+        List<List<String>> batches = new ArrayList<>();
+        
+        for (int i = 0; i < instIdsToDelete.size(); i += batchSize) {
+            batches.add(instIdsToDelete.subList(i, Math.min(i + batchSize, instIdsToDelete.size())));
+        }
+
+        // delete eligible instances in batches
+        for (List<String> batch : batches) {
+            try {
+                TerminateInstancesRequest req = new TerminateInstancesRequest(batch);
+                TerminateInstancesResult rs = ec2.terminateInstances(req);
+                if (rs.getTerminatingInstances() != null) {
+                    log.debug("Add terminated instances to stateChanges: " + rs.getTerminatingInstances());
+                    stateChanges.addAll(rs.getTerminatingInstances());
+                }
+                
+                // Small delay between batches to avoid rate limiting
+                if (batches.size() > 1) {
+                    try {
+                        Thread.sleep(100);
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        log.warn("Batch deletion interrupted between batches");
+                        break;
+                    }
+                }
+                
+            } catch (AmazonServiceException ase) {
+                log.error("Failed to delete batch of instances: " + batch + ". Error: " + ase.getMessage(), ase);
+                // Continue with next batch even if one batch fails
+            }
         }
 
         if (log.isTraceEnabled()) {
@@ -2279,18 +2310,33 @@ public class AWSClient {
             log.trace("Start in class AWSClient in method applyPostCreationBehaviorForInstance with parameters: newInstances: "
                       + newInstance);
         }
-        if (newInstance != null) {
-            List<Tag> tagsToBeCreated = createTagsForInstanceCreation(newInstance,
-            		                    usedTemplate.getInstanceTags(),
-                                        awsRequest.getTagValue());
-            AWSClient.tagInstance(newInstance,tagsToBeCreated);
-            AWSClient.tagEbsVolumes(newInstance, tagsToBeCreated);
 
+        // lsf-L3-tracker/issues/1490 - to avoid NullPointerException
+        if (newInstance == null) {
+            log.warn("Cannot apply post-creation behavior: newInstance is null");
+            return;
         }
+        
+        // usedTemplate might return null if it's been disabled or changed
+        if (usedTemplate == null) {
+            log.warn("Cannot apply post-creation behavior: usedTemplate is null");
+            return;
+        }
+                
+        if (awsRequest == null) {
+            log.warn("Cannot apply post-creation behavior: awsRequest is null");
+            return;
+        }
+
+        List<Tag> tagsToBeCreated = createTagsForInstanceCreation(newInstance,
+                                    usedTemplate.getInstanceTags(),
+                                    awsRequest.getTagValue());
+        AWSClient.tagInstance(newInstance,tagsToBeCreated);
+        AWSClient.tagEbsVolumes(newInstance, tagsToBeCreated);
+
         if (log.isTraceEnabled()) {
             log.trace("End in class AWSClient in method applyPostCreationBehaviorForInstance with return: void: ");
         }
-
     }
 
     private static void tagInstance(Instance instance, List<Tag> tagsToBeCreated) {
