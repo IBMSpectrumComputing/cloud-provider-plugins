@@ -121,7 +121,7 @@ class ConfigManager:
             if not os.path.exists(credential_file):
                 raise ValueError(f"AWS_CREDENTIAL_FILE not found: {credential_file}")
             
-            logger.info(f"Using credentials from file: {credential_file}")
+            logger.debug(f"Using credentials from file: {credential_file}")
             return self._get_credentials_from_file(credential_file)
         
         # Method 2: Credentials script
@@ -130,11 +130,11 @@ class ConfigManager:
             if not os.path.exists(credential_script):
                 raise ValueError(f"AWS_CREDENTIAL_SCRIPT not found: {credential_script}")
             
-            logger.info(f"Using credentials from script: {credential_script}")
+            logger.debug(f"Using credentials from script: {credential_script}")
             return self._get_credentials_from_script(credential_script)
         
         # Method 3: IAM Role (let boto3 handle it automatically)
-        logger.info("Using IAM Role credentials (EC2 instance profile)")
+        logger.debug("Using IAM Role credentials (EC2 instance profile)")
         return {}
     
     def _get_credentials_from_file(self, credential_file: str) -> Dict[str, str]:
