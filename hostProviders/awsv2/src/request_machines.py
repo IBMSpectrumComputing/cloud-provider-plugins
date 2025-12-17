@@ -35,12 +35,17 @@ def main():
                 rc_account
             )
         
+        logger.info(f"requestMachines output: {output_data}")
         write_output_json(output_data)
         sys.exit(0)
         
     except Exception as e:
         logger.error(f"Error in requestMachines: {e}")
-        write_output_json({"error": str(e)})
+        error_output = {
+            "requestId": None,
+            "message": str(e)
+        }
+        write_output_json(error_output)
         sys.exit(1)
 
 if __name__ == "__main__":

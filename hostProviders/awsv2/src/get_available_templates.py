@@ -25,8 +25,8 @@ def main():
     try:
         template_manager = TemplateManager()
         templates = template_manager.get_available_templates()
-        logger.info(templates)
-        print(templates)
+        logger.info(f"getAvailableTemplates output: {templates}")
+        write_output_json(templates)
         sys.exit(0)
         
     except Exception as e:

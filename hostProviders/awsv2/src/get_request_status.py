@@ -13,7 +13,6 @@
 # limitations under the License.
 
 import sys
-import os
 import logging
 from request_manager import RequestManager
 from utils import write_output_json, read_input_json
@@ -31,12 +30,19 @@ def main():
         request_manager = RequestManager()
         output_data = request_manager.get_request_status(request_ids)
         
+        logger.info(f"getRequestStatus output: {output_data}")
         write_output_json(output_data)
         sys.exit(0)
         
     except Exception as e:
         logger.error(f"Error in getRequestStatus: {e}")
-        write_output_json({"error": str(e)})
+        error_output = {
+            "requestId": None,
+            "status": "complete_with_error",
+            "machines": [],
+            "message": str(e)
+        }
+        write_output_json(error_output)
         sys.exit(1)
 
 if __name__ == "__main__":
