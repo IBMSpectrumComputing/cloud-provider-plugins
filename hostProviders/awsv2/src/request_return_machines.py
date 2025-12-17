@@ -29,12 +29,17 @@ def main():
         request_manager = RequestManager()
         output_data = request_manager.request_return_machines(machines)
         
+        logger.info(f"requestReturnMachines output: {output_data}")
         write_output_json(output_data)
         sys.exit(0)
         
     except Exception as e:
         logger.error(f"Error in requestReturnMachines: {e}")
-        write_output_json({"error": str(e)})
+        error_output = {
+            "requestId": None,
+            "message": str(e)
+        }
+        write_output_json(error_output)
         sys.exit(1)
 
 if __name__ == "__main__":

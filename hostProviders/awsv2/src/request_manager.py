@@ -51,13 +51,12 @@ class RequestManager:
         template_manager = TemplateManager()
         template = template_manager.get_template(template_id)
         
-        # Use context manager to ensure proper cleanup
         with self.aws_client.resource_context():
-            request_id = self.aws_client.create_instances(template, count, rc_account)
+            request_id = self.aws_client.request_machines(template, count, rc_account)
         
         return {
-            "message": f"Request instances success from aws. Created {count} instances.",
-            "requestId": request_id
+            "requestId": request_id,
+            "message": f"Request instances success from aws. Requested {count} instances/slots."
         }
 
     def request_return_machines(self, machines: List[Dict[str, str]]) -> Dict[str, Any]:
@@ -66,11 +65,11 @@ class RequestManager:
         
         # Use context manager to ensure proper cleanup
         with self.aws_client.resource_context():
-            request_id = self.aws_client.terminate_instances(instance_ids)
+            request_id = self.aws_client.request_return_machines(instance_ids)
         
         return {
-            "message": "Request to terminate instances successful.",
-            "requestId": request_id
+            "requestId": request_id,
+            "message": "Request to terminate instances successful."
         }
 
     def get_request_status(self, request_ids: List[str]) -> Dict[str, Any]:
@@ -78,22 +77,25 @@ class RequestManager:
         requests = []
         
         for request_id in request_ids:
-            status = self.aws_client.get_request_status(request_id)
+            result = self.aws_client.get_request_status(request_id)
             requests.append({
-                "status": status['status'],
-                "machines": status['machines'],
                 "requestId": request_id,
-                "message": status['message']
+                "status": result['status'],
+                "machines": result['machines'],
+                "message": result['message']
             })
         
         return {"requests": requests}
 
     def get_return_requests(self, machines: List[Dict[str, str]]) -> Dict[str, Any]:
         """Check for terminated instances by reading from database and AWS"""
-        instance_ids = [machine['machineId'] for machine in machines]
         
         # Use context manager to ensure proper cleanup
         with self.aws_client.resource_context():
-            result = self.aws_client.check_terminated_instances(instance_ids)
+            result = self.aws_client.get_return_requests(machines)
     
-        return result
+        return {
+            "requests": result['requests'],
+            "status": result['status'],
+            "message": result['message']
+        }

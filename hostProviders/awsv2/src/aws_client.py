@@ -17,8 +17,11 @@ import time
 import os
 import threading
 import random
+import botocore
+from datetime import datetime
 from typing import Dict, List, Any, Optional
 from botocore.exceptions import ClientError
+from botocore.config import Config
 import logging
 import json
 import base64
@@ -29,6 +32,7 @@ from contextlib import contextmanager
 from db_manager import db_manager
 from config_manager import config_manager
 from template_manager import TemplateManager
+from collections import defaultdict
 
 logger = logging.getLogger(__name__)
 
@@ -38,8 +42,7 @@ class AWSClient:
             logger.debug("Initializing AWSClient...")
             # Get region using the config manager instance
             self.region = config_manager.get_region()
-            logger.info(f"Using AWS region: {self.region}")
-            logger.debug(f"Region configuration loaded: {self.region}")
+            logger.debug(f"Using AWS region: {self.region}")
             
             # Credential caching
             self.credentials = None
@@ -72,9 +75,17 @@ class AWSClient:
             else:
                 logger.debug("AWS credentials validation passed")
             
+            # Configure retry strategy
+            self.config = Config(
+                retries={
+                    'max_attempts': 10,  # Total attempts
+                    'mode': 'adaptive'  # Adaptive retry mode
+                }
+            )
+            
             # Create clients from the session
-            self.ec2 = self.session.client('ec2')
-            self.ec2_resource = self.session.resource('ec2')
+            self.ec2 = self.session.client('ec2', config=self.config)
+            self.ec2_resource = self.session.resource('ec2', config=self.config)
             logger.debug("EC2 client and resource created")
             
             # Handle custom endpoint if configured
@@ -102,10 +113,10 @@ class AWSClient:
             self._test_connection()
             logger.debug("AWS connection test completed successfully")
             
-            self.requests = {}
             self.vm_pool = None
             self.min_vm_workers = int(os.getenv('AWS_MIN_WORKERS', '10'))
-            self.max_vm_workers = int(os.getenv('AWS_MAX_WORKERS', '50'))
+            self.max_vm_workers = int(os.getenv('AWS_MAX_WORKERS', '200'))
+            self.batch_size = int(os.getenv('AWS_BATCH_SIZE', '200'))
             logger.debug(f"AWSClient initialized with min_workers={self.min_vm_workers}, max_workers={self.max_vm_workers}")
             
             self.cleanup_interval = int(os.getenv('CLEANUP_INTERVAL_MINUTES', '30')) * 60  # Convert to seconds
@@ -267,76 +278,105 @@ class AWSClient:
                 logger.debug(f"Thread pool shutdown stack trace:", exc_info=True)
         else:
             logger.debug("No VM thread pool to clean up")
-
-
-    def create_instances(self, template: Dict, count: int, rc_account: str = 'default') -> str:
-            """Create EC2 instances using multithreading"""
-            logger.debug(f"Starting create_instances for template {template.get('templateId')}, count: {count}")
-            # Check credentials once at the beginning of bulk operation
-            self._refresh_credentials_if_needed()
             
-            try:
-                # Check for Spot Fleet configuration (template-based)
-                if template.get('fleetRole'):
-                    logger.info(f"Using Spot Fleet for template {template.get('templateId')}")
-                    logger.debug(f"Spot Fleet configuration found: fleetRole={template.get('fleetRole')}")
-                    result = self._create_spot_fleet(template, count, rc_account)
+    def _format_error_message(self, context: str, error: Exception) -> str:
+        """Format error message with context and AWS error code"""
+        # Extract AWS error code from ClientError
+        error_code = "UnknownError"
+        if hasattr(error, 'response') and 'Error' in getattr(error, 'response', {}):
+            error_code = error.response['Error']['Code']
+        
+        return f"{context}. Error Code: {error_code}"
+
+    def request_machines(self, template: Dict, count: int, rc_account: str = 'default') -> str:
+        """Create EC2 instances using multithreading"""
+        logger.debug(f"Starting request_machines for template {template.get('templateId')}, count: {count}")
+        # Check credentials once at the beginning of bulk operation
+        self._refresh_credentials_if_needed()
+        
+        try:
+            # Check for Spot Fleet configuration (template-based)
+            if template.get('fleetRole'):
+                logger.info(f"Using Spot Fleet for template {template.get('templateId')}")
+                logger.debug(f"Spot Fleet configuration found: fleetRole={template.get('fleetRole')}")
+                result = self._create_spot_fleet(template, count, rc_account)
+            
+            # Check for EC2 Fleet configuration - simple boolean check
+            elif template.get('ec2FleetConfig'):
+                logger.info(f"Using EC2 Fleet for template {template.get('templateId')}")
+                logger.debug(f"EC2 Fleet configuration found: {template.get('ec2FleetConfig')}")
+                result = self._create_ec2_fleet(template, count, rc_account)
+            
+            # Basic template or launch template
+            else:
+                logger.info(f"Using Basic configuration for template {template.get('templateId')}")
+                logger.debug("Using basic instance creation method")
+                result = self._create_instances(template, count, rc_account)
+            
+            logger.info(f"Result: {result}")
+            logger.debug(f"Creation result details: success={result.get('success')}, request_id={result.get('request_id')}")
+            
+            # Common result processing
+            if result and result['success']:
+                request_id = result['request_id']
+                logger.info(f"Request {request_id}: Creating {count} instances/slots")
                 
-                # Check for EC2 Fleet configuration - simple boolean check
-                elif template.get('ec2FleetConfig'):
-                    logger.info(f"Using EC2 Fleet for template {template.get('templateId')}")
-                    logger.debug(f"EC2 Fleet configuration found: {template.get('ec2FleetConfig')}")
-                    result = self._create_ec2_fleet(template, count, rc_account)
+                # FIX: Check if there's a warning in the result
+                if 'warning' in result:
+                    logger.warning(f"Request {request_id} completed with warning: {result['warning']}")
                 
-                # Basic template or launch template
+                return request_id
+            else:
+                if result is None:
+                    error_msg = 'Failed to create instances. Error Code: InternalError'
+                    logger.debug("Creation method returned None result")
                 else:
-                    logger.info(f"Using Basic configuration for template {template.get('templateId')}")
-                    logger.debug("Using basic instance creation method")
-                    result = self._create_instances(template, count, rc_account)
-                
-                logger.info(f"Result: {result}")
-                logger.debug(f"Creation result details: success={result.get('success')}, request_id={result.get('request_id')}")
-                
-                # Common result processing
-                if result and result['success']:
-                    request_id = result['request_id']
-                    # Store request information
-                    self.requests[request_id] = {
-                        'type': 'create',
-                        'instance_ids': result['instance_ids'],
-                        'failed_instances': result.get('failed_instances', []),
-                        'status': 'running',
-                        'created_at': time.time(),
-                        'total_requested': count,
-                        'successful': len(result['instance_ids']),
-                        'failed': len(result.get('failed_instances', []))
-                    }
-                    logger.info(f"Request {request_id}: Creating {count} instances/slots")
-                    logger.debug(f"Request {request_id} stored in memory cache")
-                    return request_id
-                else:
-                    if result is None:
-                        error_msg = 'Creation method returned None'
-                        logger.error("Creation method returned None result")
+                    # Extract error from failed_instances if available
+                    if result.get('failed_instances'):
+                        # Get the first error from failed instances
+                        first_error = result['failed_instances'][0].get('error', 'Unknown error')
+                        error_msg = f"Failed to create instances. {first_error}"
                     else:
-                        error_msg = result.get('error', 'Unknown error')
-                        logger.error(f"Creation failed with error: {error_msg}")
-                    
-                    logger.error(f"Instance creation failed: {error_msg}")
-                    raise Exception(f"Instance creation failed: {error_msg}")
-            except Exception as e:
-                logger.error(f"Unexpected error in create_instances: {e}")
-                logger.debug(f"create_instances stack trace:", exc_info=True)
-                raise Exception(f"Instance creation failed: {str(e)}")
+                        error_msg = result.get('error', 'Failed to create instances. Error Code: UnknownError')
+                    logger.debug(f"Creation failed with error: {error_msg}")
+                
+                # FIX: Don't wrap this in Exception - just raise the string directly
+                # This prevents it from being caught by the general Exception handler below
+                raise Exception(error_msg)
+                
+        except ClientError as e:
+            error_msg = self._format_error_message("Failed to create instances on AWS", e)
+            logger.error(f"AWS API error: {error_msg}")
+            logger.debug(f"AWS ClientError details:", exc_info=True)
+            raise Exception(error_msg)
+            
+        except Exception as e:
+            # Only handle truly unexpected exceptions here
+            # If the error message already contains an AWS error code, don't reformat it
+            error_str = str(e)
+            if "Error Code:" in error_str:
+                # This is already a formatted error with AWS code, just re-raise it
+                logger.debug(f"Creation failed with AWS error: {error_str}")
+                raise Exception(error_str)
+            else:
+                # This is an unexpected error, format it
+                error_msg = self._format_error_message("Unexpected error while creating instances", e)
+                logger.error(f"Unexpected error: {error_msg}")
+                logger.debug(f"Unexpected error details:", exc_info=True)
+                raise Exception(error_msg)
  
     def _create_instances(self, template: Dict, count: int, rc_account: str = 'default') -> Dict[str, Any]:
-        """Create instances"""
+        """Create instances with batching for large counts"""
         logger.debug(f"Starting _create_instances for {count} instances")
         
-        # Basic ec2 instance creation and launch template 
-        # This is the only request where we need to create an request id
+        # AWS has a limit of 1000 instances per run_instances API call
+        batches_needed = (count + self.batch_size - 1) // self.batch_size  # Ceiling division
+        logger.debug(f"Will create {count} instances in {batches_needed} batch(es) of up to {self.batch_size} each")
+        
+        # This is the only request where we need to create a request id
         request_id = f"dir-{os.getpid()}-{int(time.time())}"
         logger.debug(f"Starting instance creation request {request_id} for {count} instances")
+        
         # Create request in database first
         db_manager.create_request(
             request_id=request_id,
@@ -346,90 +386,25 @@ class AWSClient:
         )
         logger.debug(f"Created request {request_id} in database")
         
-        # Initialize thread pool
-        self._init_vm_pool()
-        
-        instance_results = []
         instance_ids = []
         failed_instances = []
         
-        bulk_operation_failed = False
-        bulk_exception = None
+        # Collect all machine data for batch addition
+        all_machines_data = []
         
-        try:
-            if self.vm_pool:
-                # Use thread pool for concurrent instance creation
-                logger.debug(f"Using thread pool for {count} instance creations")
-                futures = []
-                for i in range(count):
-                    future = self.vm_pool.submit(self._create_single_instance, template, i, request_id, rc_account)
-                    futures.append(future)
-                    logger.debug(f"Submitted future for instance {i}")
-                
-                # Wait for all futures to complete
-                logger.debug("Waiting for all instance creation futures to complete")
-                for future in as_completed(futures):
-                    result = future.result()
-                    instance_results.append(result)
-                    logger.debug(f"Future completed with result: success={result.get('success')}")
-                    
-                    if result['success']:
-                        instance_ids.append(result['instance_id'])
-                        logger.info(f"Successfully created instance: {result['instance_id']}")
-                    else:
-                        failed_instances.append(result)
-                        logger.error(f"Failed to create instance: {result['error']}")
+        for batch_num in range(batches_needed):
+            batch_start_idx = batch_num * self.batch_size
+            batch_remaining = count - batch_start_idx
+            batch_size = min(self.batch_size, batch_remaining)
             
-            else:
-                # Fallback to sequential creation
-                logger.warning("Using sequential instance creation (thread pool not available). Starting sequential instance creation")
-                for i in range(count):
-                    logger.debug(f"Sequentially creating instance {i+1}/{count}")
-                    result = self._create_single_instance(template, i, request_id, rc_account)
-                    instance_results.append(result)
-                    
-                    if result['success']:
-                        instance_ids.append(result['instance_id'])
-                        logger.info(f"Successfully created instance: {result['instance_id']}")
-                        logger.debug(f"Sequential instance {result['instance_id']} creation succeeded")
-                    else:
-                        failed_instances.append(result)
-                        logger.error(f"Failed to create instance: {result['error']}")                      
-                        logger.debug(f"Sequential instance creation failed - index: {result.get('instance_index')}, error: {result.get('error')}")
-        
-        except Exception as e:
-            logger.error(f"Error during instance creation: {e}")
-            logger.debug(f"Bulk creation exception - type: {type(e).__name__}, args: {e.args}")
-            logger.debug("Bulk creation stack trace:", exc_info=True)
-            bulk_operation_failed = True
-            bulk_exception = e
-        
-        finally:
-            # Clean up thread pool for this operation
-            if self.vm_pool:
-                logger.debug("Shutting down VM pool after instance creation")
-                self.vm_pool.shutdown(wait=False)
-
-        logger.debug(f"_create_instances completed - successful: {len(instance_ids)}, failed: {len(failed_instances)}")
-        return {
-            'success': len(instance_ids) > 0,
-            'request_id': request_id,
-            'instance_ids': instance_ids,
-            'failed_instances': failed_instances
-        }
-                        
-    def _create_single_instance(self, template: Dict, instance_index: int, request_id: str, rc_account: str = 'default') -> Dict[str, Any]:
-        """Create a single EC2 instance (thread-safe)"""
-        logger.debug(f"Starting _create_single_instance for index {instance_index}, request {request_id}")
-        try:                  
-            logger.debug(f"Creating instance {instance_index} for request {request_id} with template id: {template.get('templateId')}")
+            logger.info(f"Processing batch {batch_num + 1}/{batches_needed}: {batch_size} instances")
             
-            # Build the base parameters
+            # Build the base parameters for this batch
             instances_params = {
-                'MinCount': 1,
-                'MaxCount': 1
+                'MinCount': batch_size,
+                'MaxCount': batch_size
             }
-            logger.debug("Base instance parameters set: MinCount=1, MaxCount=1")
+            logger.debug(f"Batch {batch_num + 1}: MinCount={batch_size}, MaxCount={batch_size}")
             
             # Add launch template OR individual parameters
             launch_template_id = template.get('launchTemplateId')
@@ -438,34 +413,32 @@ class AWSClient:
                     'LaunchTemplateId': launch_template_id,
                     'Version': template.get('launchTemplateVersion', '$Default')
                 }
-                logger.debug(f"Using launch template: {launch_template_id}")
+                logger.debug(f"Batch {batch_num + 1}: Using launch template: {launch_template_id}")
             else:
                 instances_params['ImageId'] = template['imageId']
-                logger.debug(f"Using ImageId: {template['imageId']}")
+                logger.debug(f"Batch {batch_num + 1}: Using ImageId: {template['imageId']}")
             
             # Use helper functions for common parameters
-            logger.debug("Building network interfaces...")
             network_interfaces = self._build_network_interfaces(template)
-            logger.debug("Building user data...")
             user_data = self._build_user_data(template, rc_account)
-            logger.debug("Building instance tags...")
             instance_tags = self._build_instance_tags(template, rc_account)
             
             # Handle multiple VM types for direct instance creation (not using launch template)
             vm_type = template.get('vmType')
             selected_vm_type = None
             if vm_type and ',' in vm_type and not launch_template_id:
-                # Multiple VM types available - choose one randomly
+                # Multiple VM types available - choose one for this batch
+                # Random selection ensures distribution across batches
                 vm_types = [v.strip() for v in vm_type.split(',') if v.strip()]
                 if vm_types:
                     selected_vm_type = random.choice(vm_types)
-                    logger.debug(f"Multiple VM types available: {vm_types}, chosen: {selected_vm_type}")
+                    logger.debug(f"Batch {batch_num + 1}: Multiple VM types available: {vm_types}, chosen: {selected_vm_type}")
                 else:
-                    logger.warning("No valid VM types found in vmType string")
+                    logger.warning(f"Batch {batch_num + 1}: No valid VM types found in vmType string")
             elif vm_type:
                 # Single VM type
                 selected_vm_type = vm_type
-                logger.debug(f"Single VM type: {selected_vm_type}")
+                logger.debug(f"Batch {batch_num + 1}: Single VM type: {selected_vm_type}")
             
             # Build IAM instance profile
             iam_profile = {}
@@ -474,19 +447,19 @@ class AWSClient:
                 iam_profile = {
                     'Arn' if instance_profile.startswith('arn:aws:iam:') else 'Name': instance_profile
                 }
-                logger.debug(f"Attaching IAM instance profile: {instance_profile}")
+                logger.debug(f"Batch {batch_num + 1}: Attaching IAM instance profile: {instance_profile}")
                 
             # Build placement
             placement = {}
             placement_group = template.get('placementGroupName')
             if placement_group:
                 placement['GroupName'] = placement_group
-                logger.debug(f"Using placement group: {placement_group}")
+                logger.debug(f"Batch {batch_num + 1}: Using placement group: {placement_group}")
                 
             tenancy = template.get('tenancy')
-            if tenancy and tenancy in ['default', 'dedicated', 'host']:
+            if tenancy and tenancy in ['default', 'dedicated']:
                 placement['Tenancy'] = tenancy
-                logger.debug(f"Using tenancy: {tenancy}")
+                logger.debug(f"Batch {batch_num + 1}: Using tenancy: {tenancy}")
             
             # Build market options
             market_options = {}
@@ -500,41 +473,54 @@ class AWSClient:
                         'MaxPrice': str(spot_price)
                     }
                 }
-                logger.debug(f"Using spot instance with max price: {spot_price}")
+                logger.debug(f"Batch {batch_num + 1}: Using spot instance with max price: {spot_price}")
 
             # Add optional parameters only if they have values
             if network_interfaces:
+                # For batch creation, AWS will create network interfaces for each instance
+                # using the same configuration
                 instances_params['NetworkInterfaces'] = network_interfaces
-                logger.debug(f"Using NetworkInterfaces parameter: {network_interfaces}")
+                logger.debug(f"Batch {batch_num + 1}: Using NetworkInterfaces parameter")
             else:
                 # Fallback to individual network parameters
                 security_groups = template.get('securityGroupIds')
                 if security_groups:
                     instances_params['SecurityGroupIds'] = security_groups
-                    logger.debug(f"Using SecurityGroupIds: {security_groups}")
+                    logger.debug(f"Batch {batch_num + 1}: Using SecurityGroupIds: {security_groups}")
                 
                 subnet_id = template.get('subnetId')
                 if subnet_id:
-                    instances_params['SubnetId'] = subnet_id
-                    logger.debug(f"Using SubnetId: {subnet_id}")
-                        
+                    # For multiple subnets, choose one for this batch
+                    if ',' in subnet_id:
+                        subnets = [s.strip() for s in subnet_id.split(',') if s.strip()]
+                        if subnets:
+                            # Random selection ensures distribution across batches
+                            chosen_subnet = random.choice(subnets)
+                            instances_params['SubnetId'] = chosen_subnet
+                            logger.debug(f"Batch {batch_num + 1}: Multiple subnets available: {subnets}, chosen: {chosen_subnet}")
+                        else:
+                            logger.warning(f"Batch {batch_num + 1}: No valid subnets found in subnetId string")
+                    else:
+                        instances_params['SubnetId'] = subnet_id
+                        logger.debug(f"Batch {batch_num + 1}: Using SubnetId: {subnet_id}")
+                            
             key_name = self._get_key_name(template)
             if key_name:
                 instances_params['KeyName'] = template['keyName']
-                logger.debug(f"Using key pair: {template['keyName']}")
+                logger.debug(f"Batch {batch_num + 1}: Using key pair: {template['keyName']}")
             
             # Use selected VM type (could be from multiple choices or single)
             if selected_vm_type:
                 instances_params['InstanceType'] = selected_vm_type
-                logger.debug(f"Using Instance Type: {selected_vm_type}")
+                logger.debug(f"Batch {batch_num + 1}: Using Instance Type: {selected_vm_type}")
                 
             if template.get('ebsOptimized'):
                 instances_params['EbsOptimized'] = template['ebsOptimized']
-                logger.debug(f"Setting EBS optimized to: {template['ebsOptimized']}")
+                logger.debug(f"Batch {batch_num + 1}: Setting EBS optimized to: {template['ebsOptimized']}")
                 
             if user_data:
                 instances_params['UserData'] = user_data
-                logger.debug("Using User Data")    
+                logger.debug(f"Batch {batch_num + 1}: Using User Data")    
                 
             if instance_tags:
                 instances_params['TagSpecifications'] = [
@@ -547,63 +533,102 @@ class AWSClient:
                         'Tags': instance_tags
                     }
                 ]
-                logger.debug(f"Added {len(instance_tags)} tags to TagSpecifications")
+                logger.debug(f"Batch {batch_num + 1}: Added {len(instance_tags)} tags to TagSpecifications")
 
             if market_options:
                 instances_params['InstanceMarketOptions'] = market_options
-                logger.debug("Added InstanceMarketOptions")
+                logger.debug(f"Batch {batch_num + 1}: Added InstanceMarketOptions")
 
             if placement:
                 instances_params['Placement'] = placement
-                logger.debug("Added Placement configuration")
+                logger.debug(f"Batch {batch_num + 1}: Added Placement configuration")
 
             if iam_profile:
                 instances_params['IamInstanceProfile'] = iam_profile
-                logger.debug("Added IAM instance profile")
+                logger.debug(f"Batch {batch_num + 1}: Added IAM instance profile")
 
-            logger.debug(f"About to call run_instances for instance {instance_index}")
-            logger.debug(f"Final instance params keys: {list(instances_params.keys())}")
-            response = self.ec2.run_instances(**instances_params)
-            instance = response['Instances'][0]
-            instance_id = instance.get('InstanceId')
-            logger.debug(f"Successfully created instance {instance_id}")
+            logger.debug(f"Creating Instance with config: {instances_params}")
+            logger.debug(f"Batch {batch_num + 1}: About to call run_instances for {batch_size} instances")
             
-            # Use helper for machine data creation
-            machine_data = self._create_machine_data(
-                instance_id=instance_id,
-                template=template,
-                request_id=request_id,
-                name=instance.get('PrivateDnsName'),
-                private_ip=instance.get('PrivateIpAddress', ''),
-                public_ip=instance.get('PublicIpAddress', ''),
-                public_dns=instance.get('PublicDnsName', '')
-            )
+            try:
+                # Single API call for this batch
+                response = self.ec2.run_instances(**instances_params)
+                instances = response['Instances']
+                batch_instance_ids = [instance.get('InstanceId') for instance in instances]
+                logger.info(f"Batch {batch_num + 1}: Successfully created {len(batch_instance_ids)}")
+                logger.debug(f"Batch {batch_num + 1}: Successfully created instances: {batch_instance_ids}")
+                
+                # Collect machine data for this batch - don't update DB yet
+                for instance in instances:
+                    instance_id = instance.get('InstanceId')
+                    # Use helper for machine data creation
+                    machine_data = self._create_machine_data(
+                        instance_id=instance_id,
+                        template=template,
+                        request_id=request_id,
+                        rc_account=rc_account,
+                        name=instance.get('PrivateDnsName'),
+                        private_ip=instance.get('PrivateIpAddress', ''),
+                        public_ip=instance.get('PublicIpAddress', ''),
+                        public_dns=instance.get('PublicDnsName', '')
+                    )
+                    all_machines_data.append(machine_data)
+                    logger.debug(f"Added machine {instance_id} to database")
+                
+                instance_ids.extend(batch_instance_ids)
+                time.sleep(1)
+                
+            except ClientError as e:
+                # Extract AWS error code for better error reporting
+                error_code = e.response['Error']['Code'] if hasattr(e, 'response') else 'UnknownError'
+                error_msg = self._format_error_message(f"Failed to launch EC2 instances in batch {batch_num + 1}", e)
+                logger.error(f"Batch {batch_num + 1} creation failed: {error_msg}")
+                failed_instances.append({
+                    'error': error_msg,
+                    'aws_error_code': error_code,
+                    'batch_index': batch_num,
+                    'batch_size': batch_size,
+                    'instances_failed': batch_size
+                })
+                # Continue with next batch even if this one fails
+                continue
+                
+            except Exception as e:
+                error_msg = self._format_error_message(f"Unexpected error launching instances in batch {batch_num + 1}", e)
+                logger.error(f"Batch {batch_num + 1} unexpected error: {error_msg}")
+                failed_instances.append({
+                    'error': error_msg,
+                    'aws_error_code': 'InternalError',
+                    'batch_index': batch_num,
+                    'batch_size': batch_size,
+                    'instances_failed': batch_size
+                })
+                # Continue with next batch even if this one fails
+                continue
+        
+        # BATCH ADD: Add all machines to database in one operation
+        if all_machines_data:
+            result = db_manager.add_machines_to_request(request_id, all_machines_data)
+            if result['success_count'] > 0:
+                logger.info(f"Batch added {result['success_count']} machines to database for request {request_id}")
+            if result['failed_count'] > 0:
+                logger.warning(f"Failed to add {result['failed_count']} machines to database for request {request_id}: {result.get('errors')}")
             
-            db_manager.add_machine_to_request(request_id, machine_data)
-            logger.debug(f"Added machine {instance_id} to database")
-            
-            return {
-                'success': True,
-                'instance_id': instance_id,
-                'instance': instance
-            }
-            
-        except ClientError as e:
-            logger.error(f"Failed to create instance {instance_index}: {e}")
-            logger.debug(f"ClientError details - code: {e.response['Error']['Code']}, message: {e.response['Error']['Message']}")
-            return {
-                'success': False,
-                'error': str(e),
-                'instance_index': instance_index
-            }
-        except Exception as e:
-            logger.error(f"Unexpected error creating instance {instance_index}: {e}")
-            logger.debug(f"Unexpected error stack trace:", exc_info=True)
-            return {
-                'success': False,
-                'error': str(e),
-                'instance_index': instance_index
-            }
+        logger.debug(f"_create_instances completed - successful: {len(instance_ids)}, failed batches: {len(failed_instances)}")
+        result = {
+            'success': len(instance_ids) > 0,
+            'request_id': request_id,
+            'instance_ids': instance_ids,
+            'failed_instances': failed_instances
+        }
+        
+        # If all instances failed, include a summary error
+        if not result['success'] and failed_instances:
+            first_error = failed_instances[0].get('error', 'All batch creations failed')
+            result['error'] = f"All {count} instance creations failed across {batches_needed} batches. {first_error}"
+            logger.debug(f"All instances failed: {result['error']}")
+        
+        return result
 
     def _build_user_data(self, template: Dict, rc_account: str = 'default') -> str:
         """Build user data from template - reusable across all instance types"""
@@ -629,10 +654,29 @@ class AWSClient:
                                 if key_eq_val.strip():
                                     exports.append(f"export {key_eq_val.strip()}")
                         
-                        # Always include template ID for identification
+                        # Add template ID for identification
                         if template.get('templateId'):
-                            exports.append(f"export templateID={template.get('templateId')}")
-                            logger.debug(f"Added template ID export: {template.get('templateId')}")
+                            exports.append(f"export template_id={template.get('templateId')}")
+                            logger.debug(f"Added template_id export: {template.get('templateId')}")
+                            
+                        # Add providerName
+                        provider_name = os.getenv('PROVIDER_NAME')
+                        if provider_name:
+                            exports.append(f"export providerName={provider_name}")
+                            logger.debug(f"Added providerName export: {provider_name}")
+                        else:
+                            logger.warning("PROVIDER_NAME environment variable not set")
+                            
+                        # Add clusterName
+                        script_options = os.getenv('SCRIPT_OPTIONS', '')
+                        if 'clusterName=' in script_options:
+                            try:
+                                # Split and take only the part before any potential next parameter
+                                cluster_name = script_options.split('clusterName=', 1)[1].split()[0]
+                                exports.append(f"export clustername={cluster_name}")
+                                logger.debug(f"Added clustername export: {cluster_name}")
+                            except (IndexError, AttributeError):
+                                cluster_name = None
                             
                         # Add rc_account 
                         if rc_account:
@@ -823,7 +867,7 @@ class AWSClient:
         logger.debug(f"Common params: {params}")
         return params
         
-    def _build_machine_data_template(self, template: Dict, request_id: str) -> Dict[str, Any]:
+    def _build_machine_data_template(self, template: Dict, request_id: str, rc_account: str = 'default') -> Dict[str, Any]:
         """Build base machine data template - reusable for all instance types"""
         logger.debug(f"Building machine data template for request {request_id}")
         common_params = self._get_common_instance_params(template)
@@ -837,7 +881,7 @@ class AWSClient:
             "publicDnsName": "",
             "ncores": common_params['ncores'],
             "nthreads": common_params['nthreads'],
-            "rcAccount": "default",
+            "rcAccount": rc_account,
             "lifeCycleType": "",
             "tagInstanceId": False,
             "reqId": request_id,
@@ -849,11 +893,11 @@ class AWSClient:
         return template_data
 
     def _create_machine_data(self, instance_id: str, template: Dict, request_id: str, 
-                            name: str = None, private_ip: str = "", 
+                            rc_account: str = "default", name: str = None, private_ip: str = "", 
                             public_ip: str = "", public_dns: str = "") -> Dict[str, Any]:
         """Create complete machine data for database entry"""
         logger.debug(f"Creating machine data for instance {instance_id}")
-        base_data = self._build_machine_data_template(template, request_id)
+        base_data = self._build_machine_data_template(template, request_id, rc_account)
         
         base_data.update({
             "machineId": instance_id,
@@ -884,7 +928,7 @@ class AWSClient:
                     'Type': 'request',
                     'TargetCapacity': count,
                     'IamFleetRole': fleet_role,
-                    'AllocationStrategy': template.get('allocationStrategy', 'lowestPrice'),
+                    'AllocationStrategy': template.get('allocationStrategy', 'capacityOptimized'),
                     'LaunchSpecifications': self._build_spot_fleet_launch_specs(template, rc_account)
                 }
             }
@@ -925,24 +969,26 @@ class AWSClient:
             }
         
         except ClientError as e:
-            logger.error(f"Spot Fleet creation failed: {e}")
-            logger.debug(f"Spot Fleet ClientError - code: {e.response['Error']['Code']}, message: {e.response['Error']['Message']}")
-            error_request_id = f"sfr-error-{int(time.time())}"            
+            # Extract AWS error code for better error reporting
+            error_code = e.response['Error']['Code'] if hasattr(e, 'response') else 'UnknownError'
+            error_msg = self._format_error_message("Spot Fleet request failed", e)
+            logger.error(f"Spot Fleet creation failed: {error_msg}")
             return {
                 'success': False,
-                'error': f"Spot Fleet creation failed: {str(e)}",
-                'request_id': error_request_id,
+                'error': error_msg,
+                'aws_error_code': error_code,  # Add AWS error code
+                'request_id': f"sfr-error-{int(time.time())}",
                 'instance_ids': [],
-                'failed_instances': [{'error_code': e.response['Error']['Code'], 'error_message': e.response['Error']['Message']}]
+                'failed_instances': []
             }
         except Exception as e:
-            logger.error(f"Unexpected error in Spot Fleet creation: {e}")
-            logger.debug(f"Spot Fleet unexpected error stack trace:", exc_info=True)
-            error_request_id = f"sfr-error-{int(time.time())}"
+            error_msg = self._format_error_message("Unexpected error creating Spot Fleet", e)
+            logger.error(f"Unexpected error: {error_msg}")
             return {
                 'success': False,
-                'error': f"Unexpected error in Spot Fleet creation: {str(e)}",
-                'request_id': error_request_id,
+                'error': error_msg,
+                'aws_error_code': 'InternalError',  # Add internal error code
+                'request_id': f"sfr-error-{int(time.time())}",
                 'instance_ids': [],
                 'failed_instances': []
             }
@@ -950,115 +996,223 @@ class AWSClient:
     def _build_spot_fleet_launch_specs(self, template: Dict, rc_account: str = 'default') -> List[Dict]:
         """Build Spot Fleet launch specifications from template parameters"""
         logger.debug("Building Spot Fleet launch specifications...")
-        # Use helper functions
-        network_config = self._build_network_config(template)
+        
+        # Get all subnets (not just one)
+        subnet_id = template.get('subnetId')
+        subnets = []
+        if subnet_id:
+            subnets = [s.strip() for s in subnet_id.split(',') if s.strip()]
+            logger.debug(f"Multiple subnets available: {subnets}")
+        
+        security_groups = template.get('securityGroupIds', [])
         instance_tags = self._build_instance_tags(template, rc_account)
         encoded_user_data = self._get_encoded_user_data(template, rc_account)
         
-        launch_spec = {
-            'ImageId': template.get('imageId', ''),
-            'InstanceType': template.get('vmType', ''),
-            'UserData': encoded_user_data
-        }
-        logger.debug("Base launch spec built")
-
-        # Add optional parameters
-        key_name = self._get_key_name(template)
-        if key_name:
-            launch_spec['KeyName'] = key_name
-            logger.debug(f"Using key pair for Spot Fleet: {key_name}")
+        # Get placement configuration
+        placement = {}
+        placement_group = template.get('placementGroupName')
+        if placement_group:
+            placement['GroupName'] = placement_group
             
-        if network_config.get('SubnetId'):
-            launch_spec['NetworkInterfaces'] = [{
-                'DeviceIndex': 0,
-                'SubnetId': network_config['SubnetId'],
-                'Groups': network_config['Groups']
-            }]
-            logger.debug("Added network interfaces to launch spec")
+        tenancy = template.get('tenancy')
+        if tenancy and tenancy in ['default', 'dedicated']:
+            placement['Tenancy'] = tenancy
         
-        if instance_tags:
-            launch_spec['TagSpecifications'] = [{
-                'ResourceType': 'instance',
-                'Tags': instance_tags
-            }]
-            logger.debug("Added tag specifications to launch spec")
+        # Handle multiple VM types
+        vm_type = template.get('vmType', '')
+        vm_types = []
         
-        # Remove None values
-        launch_spec = {k: v for k, v in launch_spec.items() if v is not None}
-        logger.debug(f"Final launch spec: {launch_spec}")
-        return [launch_spec]
-
-    def _poll_spot_fleet_instances(self, fleet_id: str, max_attempts: int = 3, base_delay: int = 2) -> List[str]:
-        """Poll Spot Fleet to launch instances and return instance IDs"""
-        logger.debug(f"Polling Spot Fleet instances for {fleet_id} with {max_attempts} attempts")
+        if vm_type and ',' in vm_type:
+            vm_types = [v.strip() for v in vm_type.split(',') if v.strip()]
+            logger.debug(f"Multiple VM types available: {vm_types}")
+        elif vm_type:
+            vm_types = [vm_type.strip()]
+            logger.debug(f"Single VM type: {vm_types}")
+        else:
+            logger.error("No VM type specified for Spot Fleet")
+            return []
         
-        for attempt in range(max_attempts):
-            try:
-                # Describe spot fleet instances
-                response = self.ec2.describe_spot_fleet_instances(
-                    SpotFleetRequestId=fleet_id
+        launch_specs = []
+        
+        # Create combinations: each vmType × each subnet
+        for instance_type in vm_types:
+            # If we have multiple subnets, create a launch spec for each
+            if subnets:
+                for subnet in subnets:
+                    launch_spec = self._build_single_spot_fleet_launch_spec(
+                        template, instance_type, subnet, security_groups, placement,
+                        encoded_user_data, instance_tags, rc_account
+                    )
+                    if launch_spec:
+                        launch_specs.append(launch_spec)
+                        logger.debug(f"Added launch spec for {instance_type} in {subnet} with placement: {placement}")
+            else:
+                # No subnets specified, create one launch spec per instance type
+                launch_spec = self._build_single_spot_fleet_launch_spec(
+                    template, instance_type, None, security_groups, placement,
+                    encoded_user_data, instance_tags, rc_account
                 )
-                logger.debug(f"Spot Fleet describe response received on attempt {attempt + 1}")
-                
-                active_instances = response.get('ActiveInstances', [])
-                active_instance_ids = [instance['InstanceId'] for instance in active_instances]
-                logger.debug(f"Found {len(active_instance_ids)} active instances in Spot Fleet")
-                
-                if active_instance_ids:
-                    logger.info(f"Spot Fleet {fleet_id} launched instances: {active_instance_ids} on attempt {attempt + 1}")
+                if launch_spec:
+                    launch_specs.append(launch_spec)
+                    logger.debug(f"Added launch spec for {instance_type} (no subnet) with placement: {placement}")
+        
+        logger.debug(f"Built {len(launch_specs)} launch specifications for Spot Fleet")
+        return launch_specs
 
-                    # Get existing instance IDs from database
-                    request_data = db_manager.get_request(fleet_id)
-                    existing_instance_ids = set()
-                    if request_data and 'machines' in request_data:
-                        existing_instance_ids = {machine['machineId'] for machine in request_data['machines'] if 'machineId' in machine}
-                    logger.debug(f"Found {len(existing_instance_ids)} existing instances in database")
+    def _build_single_spot_fleet_launch_spec(self, template: Dict, instance_type: str, 
+                                        subnet: Optional[str], security_groups: List[str], placement: Dict, 
+                                        encoded_user_data: str, instance_tags: List[Dict],
+                                        rc_account: str) -> Optional[Dict]:
+        """Build a single Spot Fleet launch specification"""
+        try:
+            launch_spec = {
+                'ImageId': template.get('imageId', ''),
+                'InstanceType': instance_type,
+                'UserData': encoded_user_data
+            }
+
+            # Add EbsOptimized if specified
+            if 'ebsOptimized' in template:
+                launch_spec['EbsOptimized'] = template['ebsOptimized']
+
+            # Add key pair if specified
+            key_name = self._get_key_name(template)
+            if key_name:
+                launch_spec['KeyName'] = key_name
+                
+            # Add network configuration if subnet is provided
+            if subnet:
+                network_interface = {
+                    'DeviceIndex': 0,
+                    'SubnetId': subnet,
+                    'Groups': security_groups
+                }
+                
+                # Add EFA if specified
+                if template.get('interfaceType', '').lower() == 'efa':
+                    network_interface['InterfaceType'] = 'efa'
                     
-                    # Find new instances
-                    new_instance_ids = set(active_instance_ids) - existing_instance_ids
-                    logger.debug(f"Found {len(new_instance_ids)} new instances not in database")
+                launch_spec['NetworkInterfaces'] = [network_interface]
+            
+            # Add placement if configured
+            if placement:
+                launch_spec['Placement'] = placement
+            
+            # Add tags if available
+            if instance_tags:
+                launch_spec['TagSpecifications'] = [{
+                    'ResourceType': 'instance',
+                    'Tags': instance_tags
+                }]
+
+            # Add IAM instance profile if specified
+            instance_profile = template.get('instanceProfile')
+            if instance_profile:
+                launch_spec['IamInstanceProfile'] = {
+                    'Arn' if instance_profile.startswith('arn:aws:iam:') else 'Name': instance_profile
+                }
+
+            # Remove None values
+            launch_spec = {k: v for k, v in launch_spec.items() if v is not None}
+            return launch_spec
+            
+        except Exception as e:
+            logger.error(f"Failed to build launch spec for {instance_type} in {subnet}: {e}")
+            return None
+
+    def _poll_spot_fleet_instances(self, fleet_id: str) -> List[str]:
+        """Poll Spot Fleet to launch instances and return instance IDs - no retry logic"""
+        logger.debug(f"Polling Spot Fleet instances for {fleet_id}")
+        
+        try:
+            # Describe spot fleet instances
+            response = self.ec2.describe_spot_fleet_instances(
+                SpotFleetRequestId=fleet_id
+            )
+            logger.debug("Spot Fleet describe response received")
+            
+            active_instances = response.get('ActiveInstances', [])
+            active_instance_ids = [instance['InstanceId'] for instance in active_instances]
+            logger.debug(f"Found {len(active_instance_ids)} active instances in Spot Fleet")
+            
+            if active_instance_ids:
+                logger.info(f"Spot Fleet {fleet_id} launched instances: {active_instance_ids}")
+
+                # Get existing instance IDs from database
+                request_data = db_manager.get_request(fleet_id)
+                existing_instance_ids = set()
+                if request_data and 'machines' in request_data:
+                    existing_instance_ids = {machine['machineId'] for machine in request_data['machines'] if 'machineId' in machine}
+                logger.debug(f"Found {len(existing_instance_ids)} existing instances in database")
+                
+                # Find new instances
+                new_instance_ids = set(active_instance_ids) - existing_instance_ids
+                logger.debug(f"Found {len(new_instance_ids)} new instances not in database")
+                
+                if new_instance_ids:
+                    logger.info(f"Found {len(new_instance_ids)} new instances for Spot Fleet {fleet_id}")
                     
-                    if new_instance_ids:
-                        logger.info(f"Found {len(new_instance_ids)} new instances for Spot Fleet {fleet_id}")
-                        
-                        # Get template attributes from request data
-                        template_id = request_data.get('templateId', 'unknown') if request_data else 'unknown'
-                        template_manager = TemplateManager()
-                        template = template_manager.get_template(template_id)
-                        logger.debug(f"Retrieved template {template_id} for new instances")
-                        
-                        for instance_id in new_instance_ids:
-                            # Use helper for machine data creation
-                            machine_data = self._create_machine_data(
-                                instance_id=instance_id,
-                                template=template,
-                                request_id=fleet_id,
-                                name=f"host-{instance_id}"
-                            )
-                            db_manager.add_machine_to_request(fleet_id, machine_data)
-                            logger.info(f"Added new Spot Fleet instance {instance_id} to database")
+                    # Get template attributes from request data
+                    template_id = request_data.get('templateId', 'unknown') if request_data else 'unknown'
+                    rc_account = request_data.get('rcAccount', 'default') if request_data else 'default'
+                    template_manager = TemplateManager()
+                    template = template_manager.get_template(template_id)
+                    logger.debug(f"Retrieved template {template_id} for new instances")
+                    
+                    # Collect all machine data for batch addition
+                    batch_machine_data = []
+                    for instance_id in new_instance_ids:
+                        machine_data = self._create_machine_data(
+                            instance_id=instance_id,
+                            template=template,
+                            request_id=fleet_id,
+                            rc_account=rc_account,
+                            name=f"host-{instance_id}"
+                        )
+                        batch_machine_data.append(machine_data)
+                        logger.debug(f"Prepared new Spot Fleet instance {instance_id} for batch add")
+                    
+                    # BATCH ADD: Add all new machines in one operation
+                    if batch_machine_data:
+                        result = db_manager.add_machines_to_request(fleet_id, batch_machine_data)
+                        if result['success_count'] > 0:
+                            logger.info(f"Batch added {result['success_count']} new Spot Fleet instances to database")
+                        if result['failed_count'] > 0:
+                            logger.warning(f"Failed to add {result['failed_count']} new Spot Fleet instances to database: {result.get('errors')}")
                     
                     return active_instance_ids
                 else:
-                    if attempt < max_attempts - 1:
-                        delay = base_delay * (2 ** attempt)
-                        logger.debug(f"No active instances found for Spot Fleet {fleet_id} on attempt {attempt + 1}, waiting {delay}s")
-                        time.sleep(delay)
-                    else:
-                        logger.debug(f"No active instances found for Spot Fleet {fleet_id} after {max_attempts} attempts")
-                        return []
-                    
-            except ClientError as e:
-                if e.response['Error']['Code'] == 'InvalidSpotFleetRequestId.NotFound':
-                    logger.warning(f"Spot Fleet {fleet_id} not found yet")
-                else:
-                    logger.error(f"Error describing spot fleet instances: {e}")
-                    logger.debug(f"Spot Fleet polling ClientError - code: {e.response['Error']['Code']}, message: {e.response['Error']['Message']}")
+                    # No new instances found - return existing ones
+                    logger.debug(f"No new instances found for Spot Fleet {fleet_id}")
+                    return active_instance_ids
+            else:
+                # No active instances found - return empty list
+                logger.debug(f"No active instances found for Spot Fleet {fleet_id}")
                 return []
+                
+        except ClientError as e:
+            if e.response['Error']['Code'] == 'InvalidSpotFleetRequestId.NotFound':
+                logger.warning(f"Spot Fleet {fleet_id} not found")
+            else:
+                logger.error(f"Error describing spot fleet instances: {e}")
+                logger.debug(f"Spot Fleet polling ClientError - code: {e.response['Error']['Code']}, message: {e.response['Error']['Message']}")
+            return []
+        except Exception as e:
+            logger.error(f"Unexpected error polling spot fleet instances: {e}")
+            logger.debug(f"Spot Fleet polling stack trace:", exc_info=True)
+            return []
+        
+        return []
               
     def _create_ec2_fleet(self, template: Dict, count: int, rc_account: str = 'default') -> Dict[str, Any]:
         """Create instances using EC2 Fleet API - supports both instant and request types"""
         logger.debug(f"Creating EC2 Fleet for {count} instances")
+        
+        fleet_id = None
+        fleet_type = None
+        successful_instances = []
+        failed_instances = []
+        
         try:
             logger.debug(f"Creating EC2 Fleet for template {template.get('templateId')}")
             
@@ -1146,12 +1300,11 @@ class AWSClient:
             logger.debug(f"Created request {fleet_id} in database with fleet type: {fleet_type}")
             
             # Handle different fleet types
-            successful_instances = []
-            failed_instances = []
-            
             if fleet_type == 'instant':
                 # Instant fleet - instances are returned immediately
                 logger.debug("Processing instant fleet instances immediately")
+                all_machine_data = []  # Collect all machine data for batch addition
+                
                 for instance in response.get('Instances', []):
                     instance_ids = instance.get('InstanceIds', [])
                     successful_instances.extend(instance_ids)
@@ -1163,10 +1316,19 @@ class AWSClient:
                             instance_id=instance_id,
                             template=template,
                             request_id=fleet_id,
+                            rc_account=rc_account,
                             name=f"host-{instance_id}"
                         )
-                        db_manager.add_machine_to_request(fleet_id, machine_data)
-                        logger.debug(f"Added instant fleet instance {instance_id} to database")
+                        all_machine_data.append(machine_data)
+                        logger.debug(f"Prepared instant fleet instance {instance_id} for batch add")
+                
+                # BATCH ADD: Add all machines in one operation
+                if all_machine_data:
+                    result = db_manager.add_machines_to_request(fleet_id, all_machine_data)
+                    if result['success_count'] > 0:
+                        logger.info(f"Batch added {result['success_count']} instant fleet instances to database")
+                    if result['failed_count'] > 0:
+                        logger.warning(f"Failed to add {result['failed_count']} instant fleet instances to database: {result.get('errors')}")
                 
                 # Handle any errors in the response
                 for error in response.get('Errors', []):
@@ -1192,29 +1354,55 @@ class AWSClient:
             }
             
         except ClientError as e:
-            logger.error(f"EC2 Fleet creation failed: {e}")
-            logger.debug(f"EC2 Fleet ClientError - code: {e.response['Error']['Code']}, message: {e.response['Error']['Message']}")
-            error_request_id = f"fleet-error-{int(time.time())}"
+            # Extract AWS error code for better error reporting
+            error_code = e.response['Error']['Code'] if hasattr(e, 'response') else 'UnknownError'
+            error_msg = self._format_error_message("EC2 Fleet request failed", e)
+            logger.error(f"EC2 Fleet creation failed: {error_msg}")
             
-            return {
-                'success': False,
-                'error': str(e),
-                'request_id': error_request_id,
-                'instance_ids': [],
-                'failed_instances': [{'error_code': e.response['Error']['Code'], 'error_message': e.response['Error']['Message']}]
-            }
+            # FIX: If fleet was created, return the fleet_id, not an error ID
+            if fleet_id:
+                logger.warning(f"Fleet {fleet_id} was created but encountered error: {error_msg}")
+                return {
+                    'success': True,  # Still return success since fleet was created
+                    'request_id': fleet_id,
+                    'instance_ids': successful_instances,
+                    'failed_instances': failed_instances,
+                    'fleet_type': fleet_type,
+                    'warning': error_msg  # Include error as warning
+                }
+            else:
+                return {
+                    'success': False,
+                    'error': error_msg,
+                    'aws_error_code': error_code,
+                    'request_id': f"fleet-error-{int(time.time())}",
+                    'instance_ids': [],
+                    'failed_instances': []
+                }
         except Exception as e:
-            logger.error(f"Unexpected error in EC2 Fleet creation: {e}")
-            logger.debug(f"EC2 Fleet unexpected error stack trace:", exc_info=True)
-            error_request_id = f"fleet-error-{int(time.time())}"
+            error_msg = self._format_error_message("Unexpected error creating EC2 Fleet", e)
+            logger.error(f"Unexpected error: {error_msg}")
             
-            return {
-                'success': False,
-                'error': str(e),
-                'request_id': error_request_id,
-                'instance_ids': [],
-                'failed_instances': []
-            }
+            # FIX: If fleet was created, return the fleet_id, not an error ID
+            if fleet_id:
+                logger.warning(f"Fleet {fleet_id} was created but encountered unexpected error: {error_msg}")
+                return {
+                    'success': True,  # Still return success since fleet was created
+                    'request_id': fleet_id,
+                    'instance_ids': successful_instances,
+                    'failed_instances': failed_instances,
+                    'fleet_type': fleet_type,
+                    'warning': error_msg  # Include error as warning
+                }
+            else:
+                return {
+                    'success': False,
+                    'error': error_msg,
+                    'aws_error_code': 'InternalError',
+                    'request_id': f"fleet-error-{int(time.time())}",
+                    'instance_ids': [],
+                    'failed_instances': []
+                }
 
     def _create_temp_launch_template_versions(self, fleet_config: Dict, template: Dict, encoded_user_data: str, rc_account: str = 'default') -> bool:
         """
@@ -1520,241 +1708,310 @@ class AWSClient:
             logger.error(f"Error during launch template version cleanup for fleet {request_id}: {e}")
             logger.debug(f"Launch template cleanup stack trace:", exc_info=True)
             
-    def _poll_ec2_fleet_instances(self, fleet_id: str, max_attempts: int = 3, base_delay: int = 2) -> List[str]:
-        """Poll EC2 Fleet to get launched instances - works for request fleets only"""
-        logger.debug(f"Polling EC2 Fleet instances for {fleet_id} with {max_attempts} attempts")
+    def _poll_ec2_fleet_instances(self, fleet_id: str) -> List[str]:
+        """Poll EC2 Fleet to get launched instances - no retry logic"""
+        logger.debug(f"Polling EC2 Fleet instances for {fleet_id}")
         
-        for attempt in range(max_attempts):
-            try:
-                # This method is only called for request fleets, so we don't need fleet type checks
-                response = self.ec2.describe_fleet_instances(FleetId=fleet_id)
-                logger.debug(f"EC2 Fleet describe response received on attempt {attempt + 1}")    
-                
-                active_instances = response.get('ActiveInstances', [])
-                active_instance_ids = [instance['InstanceId'] for instance in active_instances]
-                logger.debug(f"Found {len(active_instance_ids)} active instances in EC2 Fleet")
-                
-                if active_instance_ids:
-                    logger.info(f"EC2 Request Fleet {fleet_id} launched instances: {active_instance_ids} on attempt {attempt + 1}")
+        try:
+            # This method is only called for request fleets, so we don't need fleet type checks
+            response = self.ec2.describe_fleet_instances(FleetId=fleet_id)
+            logger.debug("EC2 Fleet describe response received")    
+            
+            active_instances = response.get('ActiveInstances', [])
+            active_instance_ids = [instance['InstanceId'] for instance in active_instances]
+            logger.debug(f"Found {len(active_instance_ids)} active instances in EC2 Fleet")
+            
+            if active_instance_ids:
+                logger.info(f"EC2 Request Fleet {fleet_id} launched instances: {active_instance_ids}")
 
-                    # Get existing instance IDs from database
-                    request_data = db_manager.get_request(fleet_id)
-                    existing_instance_ids = set()
-                    if request_data and 'machines' in request_data:
-                        existing_instance_ids = {machine['machineId'] for machine in request_data['machines'] if 'machineId' in machine}
-                    logger.debug(f"Found {len(existing_instance_ids)} existing instances in database")
+                # Get existing instance IDs from database
+                request_data = db_manager.get_request(fleet_id)
+                existing_instance_ids = set()
+                if request_data and 'machines' in request_data:
+                    existing_instance_ids = {machine['machineId'] for machine in request_data['machines'] if 'machineId' in machine}
+                logger.debug(f"Found {len(existing_instance_ids)} existing instances in database")
+                
+                # Find new instances
+                new_instance_ids = set(active_instance_ids) - existing_instance_ids
+                logger.debug(f"Found {len(new_instance_ids)} new instances not in database")
+                
+                if new_instance_ids:
+                    logger.debug(f"Found {len(new_instance_ids)} new instances for EC2 Request Fleet {fleet_id}")
                     
-                    # Find new instances
-                    new_instance_ids = set(active_instance_ids) - existing_instance_ids
-                    logger.debug(f"Found {len(new_instance_ids)} new instances not in database")
+                    # Get template attributes from request data
+                    template_id = request_data.get('templateId', 'unknown')
+                    rc_account = request_data.get('rcAccount', 'default')
+                    template_manager = TemplateManager()
+                    template = template_manager.get_template(template_id)
+                    logger.debug(f"Retrieved template {template_id} for new instances")
                     
-                    if new_instance_ids:
-                        logger.debug(f"Found {len(new_instance_ids)} new instances for EC2 Request Fleet {fleet_id}")
-                        
-                        # Get template attributes from request data
-                        template_id = request_data.get('templateId', 'unknown')
-                        template_manager = TemplateManager()
-                        template = template_manager.get_template(template_id)
-                        logger.debug(f"Retrieved template {template_id} for new instances")
-                        
-                        for instance_id in new_instance_ids:
-                            # Use helper for machine data creation
-                            machine_data = self._create_machine_data(
-                                instance_id=instance_id,
-                                template=template,
-                                request_id=fleet_id,
-                                name=f"host-{instance_id}"
-                            )
-                            db_manager.add_machine_to_request(fleet_id, machine_data)
-                            logger.debug(f"Added new EC2 Request Fleet instance {instance_id} to database")
+                    # Collect all machine data for batch addition
+                    batch_machine_data = []
+                    for instance_id in new_instance_ids:
+                        # Use helper for machine data creation
+                        machine_data = self._create_machine_data(
+                            instance_id=instance_id,
+                            template=template,
+                            request_id=fleet_id,
+                            rc_account=rc_account,
+                            name=f"host-{instance_id}"
+                        )
+                        batch_machine_data.append(machine_data)
+                        logger.debug(f"Prepared new EC2 Request Fleet instance {instance_id} for batch add")
+                
+                # BATCH ADD: Add all new machines in one operation
+                    if batch_machine_data:
+                        result = db_manager.add_machines_to_request(fleet_id, batch_machine_data)
+                        if result['success_count'] > 0:
+                            logger.info(f"Batch added {result['success_count']} new EC2 Request Fleet instances to database")
+                        if result['failed_count'] > 0:
+                            logger.warning(f"Failed to add {result['failed_count']} new EC2 Request Fleet instances to database: {result.get('errors')}")
                     
                     return active_instance_ids
                 else:
-                    if attempt < max_attempts - 1:
-                        delay = base_delay * (2 ** attempt)
-                        logger.debug(f"No active instances found for EC2 Request Fleet {fleet_id} on attempt {attempt + 1}, waiting {delay}s")
-                        time.sleep(delay)
-                    else:
-                        logger.debug(f"No instances found for EC2 Fleet {fleet_id} after {max_attempts} attempts")
-                        return []
+                    # No new instances found - return existing ones
+                    logger.debug(f"No new instances found for EC2 Request Fleet {fleet_id}")
+                    return active_instance_ids
+                
+            else:
+                # No active instances found - return empty list
+                logger.debug(f"No active instances found for EC2 Request Fleet {fleet_id}")
+                return []
 
-            except ClientError as e:
-                if e.response['Error']['Code'] == 'InvalidFleetId.NotFound':
-                    logger.warning(f"EC2 Fleet {fleet_id} not found yet")
-                elif e.response['Error']['Code'] == 'Unsupported':
-                    # This should not happen since we only call this for request fleets
-                    logger.error(f"Unexpected: DescribeFleetInstances not supported for fleet {fleet_id} - this should be a request fleet")
-                else:
-                    logger.error(f"Error describing EC2 fleet instances: {e}")
-                    logger.debug(f"EC2 Fleet polling ClientError - code: {e.response['Error']['Code']}, message: {e.response['Error']['Message']}")
-                return []
-            except Exception as e:
-                logger.error(f"Unexpected error polling EC2 fleet instances: {e}")
-                logger.debug(f"EC2 Fleet polling stack trace:", exc_info=True)
-                return []
+        except ClientError as e:
+            if e.response['Error']['Code'] == 'InvalidFleetId.NotFound':
+                logger.warning(f"EC2 Fleet {fleet_id} not found")
+            elif e.response['Error']['Code'] == 'Unsupported':
+                # This should not happen since we only call this for request fleets
+                logger.error(f"Unexpected: DescribeFleetInstances not supported for fleet {fleet_id} - this should be a request fleet")
+            else:
+                logger.error(f"Error describing EC2 fleet instances: {e}")
+                logger.debug(f"EC2 Fleet polling ClientError - code: {e.response['Error']['Code']}, message: {e.response['Error']['Message']}")
+            return []
+        except Exception as e:
+            logger.error(f"Unexpected error polling EC2 fleet instances: {e}")
+            logger.debug(f"EC2 Fleet polling stack trace:", exc_info=True)
+            return []
+        
+        return []
        
-    def terminate_instances(self, instance_ids: List[str]) -> str:
-        """Terminate EC2 instances using multithreading"""
-        logger.debug(f"Starting terminate_instances for {len(instance_ids)} instances: {instance_ids}")
-        # Check credentials once at the beginning of bulk operation
+    def request_return_machines(self, instance_ids: List[str]) -> str:
+        """Terminate EC2 instances using AWS batch API"""
+        logger.debug(f"Starting request_return_machines for {len(instance_ids)} instances")
+        
+        # Check credentials once at the beginning
         self._refresh_credentials_if_needed()
         
         request_id = f"remove-{os.getpid()}-{int(time.time())}"
-        logger.debug(f"Starting instance termination request {request_id} for instances: {instance_ids}")
+        logger.info(f"Starting batch instance termination request {request_id} for {len(instance_ids)} instances")
         
-        # Initialize thread pool
-        self._init_vm_pool()
+        # AWS has a limit of 1000 instances per request_return_machines call
+        chunks = []
         
-        termination_results = []
+        # Break into chunks of batch_size
+        for i in range(0, len(instance_ids), self.batch_size):
+            chunk = instance_ids[i:i + self.batch_size]
+            chunks.append(chunk)
+            logger.debug(f"Created chunk {i//self.batch_size + 1}: {len(chunk)} instances")
+        
         successful_terminations = []
         failed_terminations = []
+        all_updates = []  # Collect all updates for batch processing
         
         try:
-            if self.vm_pool:
-                logger.debug(f"Using thread pool for {len(instance_ids)} instance terminations")
-                # Use thread pool for concurrent termination
-                futures = [self.vm_pool.submit(self._terminate_single_instance, instance_id, request_id) 
-                          for instance_id in instance_ids]
-                logger.debug(f"Submitted {len(futures)} termination futures")
+            # Process each chunk
+            for chunk_idx, chunk in enumerate(chunks):
+                logger.debug(f"Processing chunk {chunk_idx + 1}/{len(chunks)} with {len(chunk)} instances")
                 
-                for future in as_completed(futures):
-                    result = future.result()
-                    termination_results.append(result)
-                    logger.debug(f"Termination future completed with result: success={result.get('success')}")
+                try:
+                    # Single AWS API call for the entire chunk
+                    response = self.ec2.terminate_instances(InstanceIds=chunk)
+                    logger.debug(f"Chunk {chunk_idx + 1}: Terminate API call successful")
                     
-                    if result['success']:
-                        successful_terminations.append(result['instance_id'])
-                        logger.debug(f"Instance {result['instance_id']} termination succeeded")
-                    else:
-                        failed_terminations.append(result)
-                        logger.debug(f"Instance termination failed - id: {result.get('instance_id')}, error: {result.get('error')}")
-            
-            else:
-                # Fallback to sequential termination
-                logger.warning("Using sequential instance termination")
-                logger.debug("Starting sequential instance termination")
-                for instance_id in instance_ids:
-                    logger.debug(f"Sequentially terminating instance {instance_id}")
-                    result = self._terminate_single_instance(instance_id, request_id)
-                    termination_results.append(result)
+                    # Get the instance states from response
+                    for instance in response.get('TerminatingInstances', []):
+                        instance_id = instance.get('InstanceId')
+                        
+                        # Try to find the request for this machine
+                        machine_info = db_manager.get_request_for_machine(instance_id)
+                        if machine_info and machine_info.get('request'):
+                            all_updates.append({
+                                'request_id': machine_info['request']['requestId'],
+                                'machine_id': instance_id,
+                                'status': 'shutting-down',
+                                'result': 'executing',
+                                'message': 'Instance termination initiated',
+                                'return_id': request_id
+                            })
+                        else:
+                            # Try legacy fallback - search all requests
+                            logger.debug(f"No machine info found for {instance_id}, trying legacy lookup")
+                            all_requests = db_manager.get_all_requests()
+                            for request in all_requests:
+                                for machine in request.get('machines', []):
+                                    if machine.get('machineId') == instance_id:
+                                        all_updates.append({
+                                            'request_id': request['requestId'],
+                                            'machine_id': instance_id,
+                                            'status': 'shutting-down',
+                                            'result': 'executing',
+                                            'message': 'Instance termination initiated (legacy)',
+                                            'return_id': request_id
+                                        })
+                                        break
+                                if any(u['machine_id'] == instance_id for u in all_updates):
+                                    break
                     
-                    if result['success']:
-                        successful_terminations.append(instance_id)
-                        logger.debug(f"Sequential termination of {instance_id} succeeded")
+                    successful_terminations.extend(chunk)
+                    logger.info(f"Chunk {chunk_idx + 1}: Successfully terminated {len(chunk)} instances")
+                    time.sleep(1)
+                    
+                except ClientError as e:
+                    error_code = e.response['Error']['Code'] if hasattr(e, 'response') else 'UnknownError'
+                    error_message = e.response['Error']['Message'] if hasattr(e, 'response') else str(e)
+                    
+                    logger.error(f"Chunk {chunk_idx + 1}: Failed to terminate instances: {error_code} - {error_message}")
+                    
+                    # Handle specific error cases
+                    if error_code == 'InvalidInstanceID.NotFound':
+                        # Some instances don't exist - try to identify which ones
+                        try:
+                            # Get details of instances in this chunk to see which exist
+                            existing_instances = []
+                            details = self.get_instance_details_bulk(chunk)
+                            for instance_id, detail in details.items():
+                                if detail.get('state') != 'terminated':
+                                    existing_instances.append(instance_id)
+                            
+                            if existing_instances:
+                                # Retry with only existing instances
+                                logger.debug(f"Retrying chunk {chunk_idx + 1} with {len(existing_instances)} existing instances")
+                                retry_response = self.ec2.terminate_instances(InstanceIds=existing_instances)
+                                
+                                # Update successful terminations
+                                successful_terminations.extend(existing_instances)
+                                
+                                # Update database for successful terminations
+                                updates = []
+                                for instance_id in existing_instances:
+                                    machine_info = db_manager.get_request_for_machine(instance_id)
+                                    if machine_info and machine_info.get('request'):
+                                        updates.append({
+                                            'request_id': machine_info['request']['requestId'],
+                                            'machine_id': instance_id,
+                                            'status': 'shutting-down',
+                                            'result': 'executing',
+                                            'message': 'Instance termination initiated',
+                                            'return_id': request_id
+                                        })
+                                
+                                if updates:
+                                    db_manager.update_machines(updates)
+                                
+                                # Add the non-existent instances to failed list
+                                non_existent = set(chunk) - set(existing_instances)
+                                for instance_id in non_existent:
+                                    failed_terminations.append({
+                                        'instance_id': instance_id,
+                                        'error': f'Instance not found - may already be terminated',
+                                        'error_code': error_code
+                                    })
+                                    logger.warning(f"Instance {instance_id} not found - may be already terminated")
+                            else:
+                                # All instances are already terminated
+                                logger.info(f"Chunk {chunk_idx + 1}: All instances already terminated")
+                                successful_terminations.extend(chunk)
+                                
+                        except Exception as retry_error:
+                            # If retry fails, mark all instances in chunk as failed
+                            for instance_id in chunk:
+                                failed_terminations.append({
+                                    'instance_id': instance_id,
+                                    'error': f'{error_code}: {error_message}',
+                                    'error_code': error_code
+                                })
                     else:
-                        failed_terminations.append(result)
-                        logger.debug(f"Sequential termination failed - id: {result.get('instance_id')}, error: {result.get('error')}")
-        
-        except Exception as e:
-            logger.error(f"Error during instance termination: {e}")
-            logger.debug(f"Bulk termination exception - type: {type(e).__name__}, args: {e.args}")
-            logger.debug("Bulk termination stack trace:", exc_info=True)
-        
-        # Store request information
-        self.requests[request_id] = {
-            'type': 'terminate',
-            'instance_ids': instance_ids,
-            'successful_terminations': successful_terminations,
-            'failed_terminations': failed_terminations,
-            'status': 'running',
-            'created_at': time.time()
-        }
-        
-        logger.info(f"Request {request_id}: Terminated {len(successful_terminations)}/{len(instance_ids)} instances")
-        logger.debug(f"Termination request {request_id} completed - successful: {len(successful_terminations)}, failed: {len(failed_terminations)}")
-        return request_id
-    
-    def _terminate_single_instance(self, instance_id: str, return_id: str) -> Dict[str, Any]:
-        """Terminate a single instance (thread-safe) - only update status, don't remove"""
-        logger.debug(f"Starting _terminate_single_instance for {instance_id} with return_id {return_id}")
-        try:
-            logger.debug(f"Terminating instance {instance_id} with return_id {return_id}")
-            response = self.ec2.terminate_instances(InstanceIds=[instance_id])
-            logger.debug(f"Termination response for {instance_id}: {response}")
+                        # Other errors - mark all instances in chunk as failed
+                        for instance_id in chunk:
+                            failed_terminations.append({
+                                'instance_id': instance_id,
+                                'error': f'{error_code}: {error_message}',
+                                'error_code': error_code
+                            })
+                
+                except Exception as e:
+                    logger.error(f"Chunk {chunk_idx + 1}: Unexpected error: {e}")
+                    for instance_id in chunk:
+                        failed_terminations.append({
+                            'instance_id': instance_id,
+                            'error': str(e),
+                            'error_code': 'InternalError'
+                        })
             
-            # Update machine status to shutting-down but don't remove from DB
-            machine_info = db_manager.get_request_for_machine(instance_id)
-            if machine_info:
-                logger.debug(f"Found machine info for {instance_id}, updating status to shutting-down")
-                db_manager.update_machine_status(
-                    machine_info['request']['requestId'],
-                    instance_id,
-                    "shutting-down",
-                    "executing",
-                    "Instance termination initiated",
-                    return_id
-                )
-            else:
-                logger.warning(f"No machine info found for instance {instance_id}")
+            # BATCH UPDATE: Apply all database updates in one operation
+            if all_updates:
+                batch_result = db_manager.update_machines(all_updates)
+                logger.debug(f"Batch updated {batch_result['success_count']} machines for termination request {request_id}")
             
-            return {
-                'success': True,
-                'instance_id': instance_id,
-                'response': response
-            }
-        except ClientError as e:
-            logger.error(f"Failed to terminate instance {instance_id}: {e}")
-            logger.debug(f"Termination ClientError - code: {e.response['Error']['Code']}, message: {e.response['Error']['Message']}")
-            return {
-                'success': False,
-                'instance_id': instance_id,
-                'error': str(e)
-            }
+            # Log overall results
+            logger.info(f"Request {request_id}: Terminated {len(successful_terminations)}/{len(instance_ids)} instances")
+            
+            if failed_terminations:
+                logger.warning(f"Request {request_id}: {len(failed_terminations)} instances failed to terminate")
+            
+            return request_id
+            
         except Exception as e:
-            logger.error(f"Unexpected error terminating instance {instance_id}: {e}")
-            logger.debug(f"Termination exception - type: {type(e).__name__}, args: {e.args}")
-            logger.debug("Termination stack trace:", exc_info=True)
-            return {
-                'success': False,
-                'instance_id': instance_id,
-                'error': str(e)
-            }
+            logger.error(f"Fatal error in request_return_machines: {e}")
+            # Return request_id anyway for tracking
+            return request_id
     
-    def check_terminated_instances(self, instance_ids: List[str]) -> Dict[str, Any]:
+    def get_return_requests(self, machines: List[Dict[str, str]]) -> Dict[str, Any]:
         """Check if instances are terminated - return consistent format"""
-        logger.debug(f"Starting check_terminated_instances for {len(instance_ids)} instances")
+        instance_ids = [machine['machineId'] for machine in machines]
+        logger.debug(f"Starting get_return_requests for {len(instance_ids)} instances")
+
         try:
             logger.debug(f"Checking terminated instances: {instance_ids}")
-            terminated_ids = self._find_terminated_instances(instance_ids)
-            logger.debug(f"Found terminated instances: {terminated_ids}")
+            terminated_instance_ids = self._find_terminated_instances(instance_ids)
+            logger.debug(f"Found terminated instances: {terminated_instance_ids}")
             
+            # Create a map from machineId to name for easy lookup
+            machine_map = {machine['machineId']: machine['name'] for machine in machines}
+        
             requests = []
-            for instance_id in terminated_ids:
-                machine_info = db_manager.get_request_for_machine(instance_id)
-                machine_name = machine_info['machine'].get('name', f'host-{instance_id}') if machine_info and machine_info.get('machine') else f'unknown-{instance_id}'
-                
+            for instance_id in terminated_instance_ids:
+                machine_name = machine_map.get(instance_id, f'host-{instance_id}')
                 requests.append({
-                    "machine": machine_name,
-                    "machineId": instance_id
+                    "machineId": instance_id,
+                    "machine": machine_name
                 })
-                logger.debug(f"Added terminated instance to results: {instance_id}")
+                logger.debug(f"Added terminated instance to results: {instance_id} with name {machine_name}")
             
             # Return consistent format with other methods
             result = {
                 "status": "complete",
                 "message": f"Found {len(requests)} terminated instances" if requests else "No terminated instances found",
-                "requests": requests,
-                "requestId": f"check-terminated-{os.getpid()}-{int(time.time())}"  # Add requestId for consistency
+                "requests": requests
             }
-            logger.debug(f"check_terminated_instances result: {result}")
+            logger.debug(f"get_return_requests result: {result}")
             return result
             
         except Exception as e:
-            logger.error(f"Error in check_terminated_instances: {e}")
-            logger.debug(f"check_terminated_instances exception - type: {type(e).__name__}, args: {e.args}")
-            logger.debug("check_terminated_instances stack trace:", exc_info=True)
+            logger.error(f"Error in get_return_requests: {e}")
+            logger.debug(f"get_return_requests exception - type: {type(e).__name__}, args: {e.args}")
+            logger.debug("get_return_requests stack trace:", exc_info=True)
             return {
                 "status": "complete_with_error",
                 "message": str(e),
-                "requests": [],
-                "requestId": ""
+                "requests": []
             }
 
-    def _find_terminated_instances(self, instance_ids: List[str]) -> List[str]:
+    def _find_terminated_instances(self, instance_ids: List[str]) -> List[Dict[str, str]]:
         """Internal method to find terminated instances"""
         logger.debug(f"_find_terminated_instances called with: {instance_ids}")
         terminated = []
-        logger.debug(f"_find_terminated_instances called with: {instance_ids}")
+        updates = []  # Collect batch updates
         
         if not instance_ids:
             logger.debug("No instance IDs provided to _find_terminated_instances")
@@ -1769,73 +2026,131 @@ class AWSClient:
                     terminated.append(instance_id)
                     logger.debug(f"Instance {instance_id} is terminated")
                     
-                    # Update database
+                    # Update database - collect for batch operation
                     machine_info = db_manager.get_request_for_machine(instance_id)
-                    if machine_info and machine_info.get('request'):
+                    if machine_info and machine_info.get('request') and machine_info.get('state') != 'terminated':
                         state = details.get('state')
-                        logger.debug(f"Updating database for instance {instance_id} to state: {state}")
-                        db_manager.update_machine_status(
-                            machine_info['request']['requestId'], 
-                            instance_id, 
-                            state,
-                            "succeed" if state == 'terminated' else "executing",
-                            f"Instance {state} by cloud provider"
-                        )
+                        logger.debug(f"Will update database for instance {instance_id} to state: {state}")
+                        updates.append({
+                            'request_id': machine_info['request']['requestId'],
+                            'machine_id': instance_id,
+                            'status': state,
+                            'result': "succeed" if state == 'terminated' else "executing",
+                            'message': f"Instance {state} by cloud provider"
+                        })
+            
+            # Apply batch update if we have updates
+            if updates:
+                batch_result = db_manager.update_machines(updates)
+                logger.debug(f"Batch updated {batch_result['success_count']} terminated instances, failed: {batch_result['failed_count']}")
         
         except Exception as e:
             logger.error(f"Error in _find_terminated_instances: {e}")
             logger.debug(f"_find_terminated_instances exception - type: {type(e).__name__}, args: {e.args}")
             logger.debug("_find_terminated_instances stack trace:", exc_info=True)
-            # Fallback to individual checks
-            logger.debug("Falling back to individual instance checks")
-            for instance_id in instance_ids:
-                try:
-                    details = self.get_instance_details(instance_id, retries=0)
-                    logger.debug(f"Individual check for {instance_id}: {details.get('state')}")
-                    if details.get('state') == 'terminated':
-                        terminated.append(instance_id)
-                        logger.debug(f"Added {instance_id} to terminated list via fallback")
-                except Exception:
-                    logger.debug(f"Individual check failed for {instance_id}")
-                    continue
+            # Asynchronous process - if we can't get details, just return empty list
+            # ebrokerd will retry later
+            logger.debug(f"Failed to get instance details, returning empty list for ebrokerd to retry later")
+            return []
         
         logger.debug(f"_find_terminated_instances returning: {terminated}")
         return terminated
 
-    def get_instance_details(self, instance_id: str, retries: int = 2) -> Dict[str, Any]:
-        """Get instance details with retry logic"""
-        logger.debug(f"get_instance_details called for {instance_id} with {retries} retries")
-        for attempt in range(retries + 1):
+    def get_instance_details(self, instance_id: str) -> Dict[str, Any]:
+        """Get instance details - no retry logic"""
+        logger.debug(f"get_instance_details called for {instance_id}")
+        try:
+            logger.debug(f"Getting details for instance {instance_id}")
+            instances = self.ec2_resource.instances.filter(InstanceIds=[instance_id])
+            instance = list(instances)[0]
+            logger.debug(f"Instance details: {instance.meta.data}")
+            state = instance.state['Name']
+            logger.debug(f"Instance {instance_id} state: {state}")
+            
+            # Get state reason if available
+            state_reason = None
+            if hasattr(instance, 'state_reason') and instance.state_reason:
+                state_reason = {
+                    'Code': instance.state_reason.get('Code'),
+                    'Message': instance.state_reason.get('Message')
+                }
+                logger.debug(f"Instance {instance_id} state_reason: {state_reason}")
+            
+            lifecycle = 'ondemand'
             try:
-                logger.debug(f"Attempt {attempt + 1} for instance {instance_id}")
-                instances = self.ec2_resource.instances.filter(InstanceIds=[instance_id])
-                instance = list(instances)[0]
-                logger.debug(f"Instance details: {instance.meta.data}")
-                state = instance.state['Name']
-                logger.debug(f"Instance {instance_id} state: {state}")
-                
-                # Get state reason if available
-                state_reason = None
-                if hasattr(instance, 'state_reason') and instance.state_reason:
-                    state_reason = {
-                        'Code': instance.state_reason.get('Code'),
-                        'Message': instance.state_reason.get('Message')
-                    }
-                    logger.debug(f"Instance {instance_id} state_reason: {state_reason}")
-                
+                if hasattr(instance, 'instance_lifecycle') and instance.instance_lifecycle:
+                    lifecycle = instance.instance_lifecycle
+                elif instance.instance_type.startswith('spot') or getattr(instance, 'spot_instance_request_id', None):
+                    lifecycle = 'spot'
+                logger.debug(f"Instance {instance_id} lifecycle: {lifecycle}")
+            except Exception as e:
+                logger.debug(f"Could not determine lifecycle for {instance_id}: {e}")
                 lifecycle = 'ondemand'
-                try:
-                    if hasattr(instance, 'instance_lifecycle') and instance.instance_lifecycle:
-                        lifecycle = instance.instance_lifecycle
-                    elif instance.instance_type.startswith('spot') or getattr(instance, 'spot_instance_request_id', None):
-                        lifecycle = 'spot'
-                    logger.debug(f"Instance {instance_id} lifecycle: {lifecycle}")
-                except Exception as e:
-                    logger.debug(f"Could not determine lifecycle for {instance_id}: {e}")
-                    lifecycle = 'ondemand'
+            
+            result = {
+                'state': state,
+                'privateIpAddress': instance.private_ip_address,
+                'publicIpAddress': instance.public_ip_address,
+                'name': instance.private_dns_name,
+                'publicDnsName': instance.public_dns_name,
+                'launchtime': instance.launch_time.timestamp() if instance.launch_time else None,
+                'lifecycle': lifecycle,
+                'state_reason': state_reason
+            }
+            logger.debug(f"Returning instance details: {result}")
+            return result
                 
-                if state != 'unknown' or attempt == retries:
-                    result = {
+        except ClientError as e:
+            logger.error(f"Failed to get instance details: {e}")
+            return {
+                'state': 'unknown',
+                'state_reason': None
+            }
+        except Exception as e:
+            logger.error(f"Unexpected error getting instance details: {e}")
+            return {
+                'state': 'unknown',
+                'state_reason': None
+            }
+
+    def get_instance_details_bulk(self, instance_ids: List[str], chunk_size: int = 100) -> Dict[str, Dict[str, Any]]:
+        """Get details for multiple instances - no retry logic"""
+        logger.debug(f"get_instance_details_bulk called for {len(instance_ids)} instances")
+        if not instance_ids:
+            return {}
+        
+        result = {}
+        
+        # Process in chunks
+        for i in range(0, len(instance_ids), chunk_size):
+            chunk = instance_ids[i:i + chunk_size]
+            
+            try:
+                instances = self.ec2_resource.instances.filter(InstanceIds=chunk)
+                found_instance_ids = set()
+                
+                for instance in instances:
+                    found_instance_ids.add(instance.id)
+                    state = instance.state['Name']
+                    
+                    # Get state reason
+                    state_reason = None
+                    if hasattr(instance, 'state_reason') and instance.state_reason:
+                        state_reason = {
+                            'Code': instance.state_reason.get('Code'),
+                            'Message': instance.state_reason.get('Message')
+                        }
+                    
+                    lifecycle = 'ondemand'
+                    try:
+                        if hasattr(instance, 'instance_lifecycle') and instance.instance_lifecycle:
+                            lifecycle = instance.instance_lifecycle
+                        elif instance.instance_type.startswith('spot') or getattr(instance, 'spot_instance_request_id', None):
+                            lifecycle = 'spot'
+                    except Exception:
+                        lifecycle = 'ondemand'
+                    
+                    result[instance.id] = {
                         'state': state,
                         'privateIpAddress': instance.private_ip_address,
                         'publicIpAddress': instance.public_ip_address,
@@ -1843,143 +2158,118 @@ class AWSClient:
                         'publicDnsName': instance.public_dns_name,
                         'launchtime': instance.launch_time.timestamp() if instance.launch_time else None,
                         'lifecycle': lifecycle,
-                        'state_reason': state_reason
+                        'state_reason': state_reason,
+                        'source': 'bulk'
                     }
-                    logger.debug(f"Returning instance details: {result}")
-                    return result
-                
-                # Wait before retrying for unknown state
-                wait_time = 2 ** attempt
-                logger.debug(f"Unknown state, waiting {wait_time}s before retry")
-                time.sleep(wait_time)
-                
+                    
+                # Handle missing instances
+                missing_in_chunk = set(chunk) - found_instance_ids
+                for missing_id in missing_in_chunk:
+                    result[missing_id] = {
+                        'state': 'terminated',
+                        'privateIpAddress': None,
+                        'publicIpAddress': None,
+                        'name': None,
+                        'publicDnsName': None,
+                        'launchtime': None,
+                        'lifecycle': None,
+                        'state_reason': None,
+                        'source': 'bulk-missing'
+                    }
+                time.sleep(1)
+                    
             except ClientError as e:
-                if attempt == retries:
-                    logger.error(f"Failed to get instance details after {retries} retries: {e}")
-                    return {
+                logger.warning(f"Bulk operation failed for chunk: {e}")
+                # Mark all instances in chunk as unknown
+                for instance_id in chunk:
+                    result[instance_id] = {
                         'state': 'unknown',
-                        'state_reason': None
+                        'privateIpAddress': None,
+                        'publicIpAddress': None,
+                        'name': None,
+                        'publicDnsName': None,
+                        'launchtime': None,
+                        'lifecycle': None,
+                        'state_reason': None,
+                        'source': 'bulk-error'
                     }
-                wait_time = 2 ** attempt
-                logger.debug(f"ClientError, waiting {wait_time}s before retry")
-                time.sleep(wait_time)
-        
-        return {
-            'state': 'unknown',
-            'state_reason': None
-        }
-
-    def get_instance_details_bulk(self, instance_ids: List[str], chunk_size: int = 100, max_retries: int = 2) -> Dict[str, Dict[str, Any]]:
-        """Get details for multiple instances - enhanced with state_reason"""
-        logger.debug(f"get_instance_details_bulk called for {len(instance_ids)} instances")
-        if not instance_ids:
-            return {}
-        
-        result = {}
-        instances_to_process = set(instance_ids)
-        
-        for attempt in range(max_retries + 1):
-            if not instances_to_process:
-                break
-                
-            current_batch = list(instances_to_process)
-            for i in range(0, len(current_batch), chunk_size):
-                chunk = current_batch[i:i + chunk_size]
-                
-                try:
-                    instances = self.ec2_resource.instances.filter(InstanceIds=chunk)
-                    found_instance_ids = set()
-                    
-                    for instance in instances:
-                        found_instance_ids.add(instance.id)
-                        state = instance.state['Name']
-                        
-                        # Get state reason
-                        state_reason = None
-                        if hasattr(instance, 'state_reason') and instance.state_reason:
-                            state_reason = {
-                                'Code': instance.state_reason.get('Code'),
-                                'Message': instance.state_reason.get('Message')
-                            }
-                        
-                        lifecycle = 'ondemand'
-                        try:
-                            if hasattr(instance, 'instance_lifecycle') and instance.instance_lifecycle:
-                                lifecycle = instance.instance_lifecycle
-                            elif instance.instance_type.startswith('spot') or getattr(instance, 'spot_instance_request_id', None):
-                                lifecycle = 'spot'
-                        except Exception:
-                            lifecycle = 'ondemand'
-                        
-                        result[instance.id] = {
-                            'state': state,
-                            'privateIpAddress': instance.private_ip_address,
-                            'publicIpAddress': instance.public_ip_address,
-                            'name': instance.private_dns_name,
-                            'publicDnsName': instance.public_dns_name,
-                            'launchtime': instance.launch_time.timestamp() if instance.launch_time else None,
-                            'lifecycle': lifecycle,
-                            'state_reason': state_reason,
-                            'source': f'bulk-attempt-{attempt}'
-                        }
-                        
-                        if state != 'unknown' or attempt == max_retries:
-                            instances_to_process.discard(instance.id)
-                    
-                    # Handle missing instances
-                    missing_in_chunk = set(chunk) - found_instance_ids
-                    for missing_id in missing_in_chunk:
-                        result[missing_id] = {
-                            'state': 'terminated',
-                            'privateIpAddress': None,
-                            'publicIpAddress': None,
-                            'name': None,
-                            'publicDnsName': None,
-                            'launchtime': None,
-                            'lifecycle': None,
-                            'state_reason': None,
-                            'source': f'bulk-missing-attempt-{attempt}'
-                        }
-                        instances_to_process.discard(missing_id)
-                        
-                except ClientError as e:
-                    logger.warning(f"Bulk attempt {attempt} failed for chunk: {e}")
-            
-            if instances_to_process and attempt < max_retries:
-                sleep_time = 2 ** attempt
-                time.sleep(sleep_time)
-        
-        # Final fallback
-        if instances_to_process:
-            for instance_id in instances_to_process:
-                individual_result = self.get_instance_details(instance_id, retries=0)
-                result[instance_id] = individual_result
+                time.sleep(1)
         
         return result
 
+    def _get_fleet_based_status(self, request_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Check fleet state and activity status to determine request status.
+        Only returns status when we can definitively determine it from fleet states.
+        Otherwise returns None (meaning use instance-level status checking).
+        """
+        try:
+            if request_id.startswith("sfr-"):
+                # Spot Fleet status check
+                response = self.ec2.describe_spot_fleet_requests(SpotFleetRequestIds=[request_id])
+                if not response.get('SpotFleetRequestConfigs'):
+                    logger.warning(f"Spot Fleet {request_id} not found")
+                    return {'status': 'complete_with_error', 'message': 'Spot Fleet not found'}
+                
+                fleet_config = response['SpotFleetRequestConfigs'][0]
+                fleet_state = fleet_config.get('SpotFleetRequestState', '')
+                activity_status = fleet_config.get('ActivityStatus', '')
+                
+                logger.debug(f"Spot Fleet {request_id} - State: {fleet_state}, Activity Status: {activity_status}")
+                
+                # Check for terminal states
+                if fleet_state in ['cancelled', 'cancelled_running', 'cancelled_terminating']:
+                    return {'status': 'complete', 'message': f'Spot Fleet {fleet_state}'}
+                elif fleet_state == 'failed':
+                    return {'status': 'complete_with_error', 'message': 'Spot Fleet failed'}
+                elif fleet_state == 'active' and activity_status in ['fulfilled', 'fulfilled_partial']:
+                    # Fleet is active but fully/partially fulfilled - no more instances will be added
+                    return {'status': 'complete', 'message': f'Spot Fleet {activity_status}'}
+                # For 'active' with 'pending_fulfillment' or other states, return None (fleet still active)
+                
+            elif request_id.startswith("fleet-"):
+                # EC2 Fleet status check
+                response = self.ec2.describe_fleets(FleetIds=[request_id])
+                if not response.get('Fleets'):
+                    logger.warning(f"EC2 Fleet {request_id} not found")
+                    return {'status': 'complete_with_error', 'message': 'EC2 Fleet not found'}
+                
+                fleet = response['Fleets'][0]
+                fleet_state = fleet.get('State', '')
+                fleet_errors = fleet.get('Errors', [])
+                
+                logger.debug(f"EC2 Fleet {request_id} - State: {fleet_state}, Errors: {len(fleet_errors)}")
+                
+                # Check for terminal states
+                if fleet_state in ['deleted', 'deleted_running', 'deleted_terminating']:
+                    return {'status': 'complete', 'message': f'EC2 Fleet {fleet_state}'}
+                elif fleet_state == 'failed':
+                    return {'status': 'complete_with_error', 'message': 'EC2 Fleet failed'}
+                elif fleet_errors:
+                    # Fleet has errors but might still be active
+                    error_messages = [e.get('ErrorMessage', 'Unknown error') for e in fleet_errors]
+                    return {'status': 'complete_with_error', 'message': f'EC2 Fleet has errors: {", ".join(error_messages)}'}
+                # For 'submitted', 'active', etc., return None (fleet still active)
+            
+            # If we can't definitively determine status from fleet state, return None
+            return None
+            
+        except ClientError as e:
+            error_code = e.response['Error']['Code']
+            logger.warning(f"Error checking {request_id} fleet status: {error_code}")
+            if 'NotFound' in error_code:
+                return {'status': 'complete_with_error', 'message': 'Fleet not found'}
+            # For other errors, continue with instance-level checking
+            return None
+        
+        except Exception as e:
+            logger.warning(f"Unexpected error checking fleet status for {request_id}: {e}")
+            # Continue with instance-level checking
+            return None
+    
     def get_request_status(self, request_id: str) -> Dict[str, Any]:
         """Get request status with proper state transition handling"""
         logger.debug(f"get_request_status called for request: {request_id}")
-        
-        # For spot fleet requests (sfr) - poll for instances before checking status
-        if request_id.startswith("sfr-"):
-            logger.debug(f"Polling Spot Fleet instances for {request_id} with retry")
-            self._poll_spot_fleet_instances(request_id)
-            
-        # For EC2 fleet requests (fleet-) - poll only for request type fleets
-        elif request_id.startswith("fleet-"):
-            logger.debug(f"Checking EC2 Fleet type for {request_id}")
-            # Get fleet type from database to determine if we need to poll
-            request_data = db_manager.get_request(request_id)
-            if request_data:
-                fleet_type = request_data.get('fleet_type', 'instant')
-                if fleet_type == 'request':
-                    logger.debug(f"Polling EC2 Request Fleet instances for {request_id} with retry")
-                    self._poll_ec2_fleet_instances(request_id)
-                else:
-                    logger.debug(f"Skipping polling for EC2 Instant Fleet {request_id}")
-            else:
-                logger.warning(f"Request data not found for {request_id}")
         
         # Determine request type
         is_creation = request_id.startswith(("dir-", "sfr-", "fleet-"))
@@ -1994,22 +2284,100 @@ class AWSClient:
                 'machines': [],
                 'requestId': request_id
             }
-            
-        # Get machines based on request type
-        machines = []
-        request_data = None
         
+        # Route to appropriate handler
         if is_creation:
-            # For creation requests, get the full request object
+            return self._handle_creation_request(request_id)
+        else:
+            return self._handle_deletion_request(request_id)
+
+    def _handle_creation_request(self, request_id: str) -> Dict[str, Any]:
+        """Handle status checking for creation requests"""
+        logger.debug(f"Processing creation request: {request_id}")
+        
+        # For spot fleet requests (sfr) - poll for instances before checking status
+        if request_id.startswith("sfr-"):
+            logger.debug(f"Polling Spot Fleet instances for {request_id}")
+            self._poll_spot_fleet_instances(request_id)
+            
+        # For EC2 fleet requests (fleet-) - poll only for request type fleets
+        elif request_id.startswith("fleet-"):
+            logger.debug(f"Checking EC2 Fleet type for {request_id}")
+            # Get fleet type from database to determine if we need to poll
             request_data = db_manager.get_request(request_id)
             if request_data:
-                machines = request_data.get('machines', [])
-                logger.debug(f"Found {len(machines)} machines for creation request {request_id}")
-        else:
-            # For deletion requests, get machines by retId
-            machines = db_manager.get_machines_for_return(request_id)
-            logger.debug(f"Found {len(machines)} machines for deletion request {request_id}")
+                fleet_type = request_data.get('fleet_type', 'instant')
+                if fleet_type == 'request':
+                    logger.debug(f"Polling EC2 Request Fleet instances for {request_id}")
+                    self._poll_ec2_fleet_instances(request_id)
+                else:
+                    logger.debug(f"Skipping polling for EC2 Instant Fleet {request_id}")
+            else:
+                logger.warning(f"Request data not found for {request_id}")
         
+        # Get request data
+        request_data = db_manager.get_request(request_id)
+        if not request_data:
+            logger.error(f"No request data found for {request_id}")
+            return {
+                'status': 'complete_with_error',
+                'message': f'Request not found: {request_id}',
+                'machines': [],
+                'requestId': request_id
+            }
+        
+        machines = request_data.get('machines', [])
+        logger.debug(f"Found {len(machines)} machines for creation request {request_id}")
+        
+        # Check if we can determine status from fleet state alone
+        if (request_id.startswith("sfr-") or request_id.startswith("fleet-")):
+            fleet_status = self._get_fleet_based_status(request_id)
+        
+            # If fleet state gives us a definitive answer, use it
+            if fleet_status:
+                logger.debug(f"Using fleet-level status for {request_id}: {fleet_status['status']}")
+                return {
+                    'status': fleet_status['status'],
+                    'message': fleet_status['message'],
+                    'machines': [],  # No machine details when using fleet-level status
+                    'requestId': request_id
+                }
+            
+            # Check for fleet requests with no machines and apply timeout
+            if not machines:
+                request_creation_time = request_data.get('time', 0)
+                current_time = int(datetime.now().timestamp() * 1000)
+                request_age_minutes = (current_time - request_creation_time) / 60000
+                
+                # If request is too old without any machines, mark as failed
+                if request_age_minutes > 30:  # 30-minute timeout
+                    logger.warning(f"Fleet request {request_id} is {request_age_minutes:.1f} minutes old with no machines - marking as failed")
+                    return {
+                        'status': 'complete_with_error',
+                        'message': f'Fleet request timed out after {request_age_minutes:.1f} minutes with no instances launched',
+                        'machines': [],
+                        'requestId': request_id
+                    }
+                else:
+                    # Still within timeout window
+                    logger.debug(f"Fleet request {request_id} is {request_age_minutes:.1f} minutes old with no machines - keeping as running")
+                    return {
+                        'status': 'running',
+                        'message': f'Fleet request processing ({request_age_minutes:.1f} minutes) - no instances launched yet',
+                        'machines': [],
+                        'requestId': request_id
+                    }
+        
+        # Process creation machines
+        return self._process_creation_machines(request_id, machines)
+
+    def _handle_deletion_request(self, request_id: str) -> Dict[str, Any]:
+        """Handle status checking for deletion requests"""
+        logger.debug(f"Processing deletion request: {request_id}")
+        
+        # Get machines for deletion request
+        machines = db_manager.get_machines_for_return(request_id)
+        logger.debug(f"Found {len(machines)} machines for deletion request {request_id}")
         
         if not machines:
             logger.debug(f"No machines found for request {request_id}")
@@ -2020,13 +2388,146 @@ class AWSClient:
                 'requestId': request_id
             }
         
+        # Process deletion machines
+        return self._process_deletion_machines(request_id, machines)
+
+    def _process_creation_machines(self, request_id: str, machines: List[Dict]) -> Dict[str, Any]:
+        """Core function to process machine statuses for creation requests"""
         # BULK OPERATION: Get all instance details at once
         instance_ids = [machine.get('machineId', '') for machine in machines if machine.get('machineId')]
         logger.debug(f"Getting bulk details for {len(instance_ids)} instances")
-        bulk_details = self.get_instance_details_bulk(instance_ids, max_retries=3)
+        bulk_details = self.get_instance_details_bulk(instance_ids)
         logger.debug(f"Bulk details retrieved: {list(bulk_details.keys())}")
         
-        # Process each machine - preserve AWS state values
+        # Process each machine
+        updates = []
+        all_complete = True
+        any_failed = False
+        updated_machines = []
+        
+        for machine in machines:
+            instance_id = machine.get('machineId', '')
+            if not instance_id:
+                logger.debug("Skipping machine without instance ID")
+                continue
+                
+            instance_details = bulk_details.get(instance_id, {})
+            current_aws_state = instance_details.get('state', 'unknown')
+            
+            logger.debug(f"Instance {instance_id}: Current DB status={machine.get('status')}, Current AWS state={current_aws_state}")
+            
+            # Clone machine for updates - preserve AWS state as status
+            updated_machine = machine.copy()
+            updated_machine['status'] = current_aws_state
+            
+            # Determine request_id for this machine
+            machine_request_id = updated_machine.get('reqId', updated_machine.get('requestId', request_id))
+            
+            # Prepare update
+            update = {
+                'request_id': machine_request_id,
+                'machine_id': instance_id,
+                'status': current_aws_state
+            }
+            
+            # Handle creation request
+            if current_aws_state == 'unknown':
+                # Check if we should timeout unknown instances
+                current_time = int(time.time())
+                launch_time = machine.get('launchtime', 0)
+                if launch_time == 0:
+                    launch_time = current_time
+                unknown_duration_minutes = (current_time - launch_time) / 60
+                
+                if unknown_duration_minutes > 30:  # Shorter timeout for unknown state
+                    update['result'] = 'fail'
+                    update['message'] = f'Instance in unknown state for {unknown_duration_minutes:.1f} minutes - assuming failed'
+                    update['status'] = 'failed'  # Override AWS state
+                    any_failed = True
+                else:
+                    update['result'] = 'executing'
+                    update['message'] = 'Instance state unknown - retrying'
+                    all_complete = False
+                    
+            elif current_aws_state == 'pending':
+                # Check if instance has been pending for too long
+                current_time = int(time.time())
+                launch_time = machine.get('launchtime', 0)
+                if launch_time == 0:
+                    launch_time = current_time
+                pending_duration_minutes = (current_time - launch_time) / 60
+                
+                if pending_duration_minutes > 60:  # More than 60 minutes
+                    update['result'] = 'fail'
+                    update['message'] = f'Instance stuck in pending state for {pending_duration_minutes:.1f} minutes - timeout exceeded'
+                    update['status'] = 'failed'
+                    any_failed = True
+                else:
+                    update['result'] = 'executing'
+                    update['message'] = f'Instance is pending ({pending_duration_minutes:.1f} minutes)'
+                    all_complete = False
+                    
+            elif current_aws_state == 'running':
+                update['result'] = 'succeed'
+                update['message'] = 'Instance running successfully'
+                
+                # Add network info if available
+                if instance_details.get('privateIpAddress'):
+                    update['private_ip'] = instance_details['privateIpAddress']
+                    updated_machine['privateIpAddress'] = instance_details['privateIpAddress']
+                if instance_details.get('publicIpAddress'):
+                    update['public_ip'] = instance_details['publicIpAddress']
+                    updated_machine['publicIpAddress'] = instance_details['publicIpAddress']
+                if instance_details.get('publicDnsName'):
+                    update['public_dns'] = instance_details['publicDnsName']
+                    updated_machine['publicDnsName'] = instance_details['publicDnsName']
+                if instance_details.get('name'):
+                    update['name'] = instance_details['name']
+                    updated_machine['name'] = instance_details['name']
+                if instance_details.get('lifecycle'):
+                    update['lifecycle'] = instance_details['lifecycle']
+                    updated_machine['lifeCycleType'] = instance_details['lifecycle']
+                
+                # InstanceId tagging for running instances
+                if self.instance_id_tag_enabled and not machine.get('tagInstanceId', False):
+                    # Schedule tagging in background
+                    self._tag_instance_with_instance_id(instance_id)
+                    update['tag_instance_id'] = True
+                    updated_machine['tagInstanceId'] = True
+                    
+            else:  # stopping, stopped, shutting-down, terminated, etc.
+                update['result'] = 'fail'
+                update['message'] = f'Instance creation failed: {current_aws_state}'
+                any_failed = True
+            
+            # Add to updates list
+            updates.append(update)
+            
+            # Update response machine object
+            updated_machine['result'] = update.get('result', machine.get('result'))
+            updated_machine['message'] = update.get('message', machine.get('message'))
+            
+            updated_machines.append(updated_machine)
+        
+        # Apply updates to database
+        if updates:
+            logger.debug(f"Performing batch update for {len(updates)} machines")
+            batch_result = db_manager.update_machines(updates)
+            logger.debug(f"Batch update result: {batch_result}")
+        
+        # Build final response
+        return self._build_final_response(request_id, updated_machines, all_complete, any_failed)
+
+    def _process_deletion_machines(self, request_id: str, machines: List[Dict]) -> Dict[str, Any]:
+        """Core function to process machine statuses for deletion requests"""
+        # BULK OPERATION: Get all instance details at once
+        instance_ids = [machine.get('machineId', '') for machine in machines if machine.get('machineId')]
+        logger.debug(f"Getting bulk details for {len(instance_ids)} instances")
+        bulk_details = self.get_instance_details_bulk(instance_ids)
+        logger.debug(f"Bulk details retrieved: {list(bulk_details.keys())}")
+        
+        # Process each machine
+        updates = []
         all_complete = True
         any_failed = False
         updated_machines = []
@@ -2045,201 +2546,76 @@ class AWSClient:
             
             # Clone machine for updates - preserve AWS state as status
             updated_machine = machine.copy()
+            updated_machine['status'] = current_aws_state
             
-            # Handle unknown state first
-            if current_aws_state == 'unknown':
-                updated_machine['status'] = 'unknown'
+            # Determine request_id for this machine
+            machine_request_id = updated_machine.get('reqId', updated_machine.get('requestId', request_id))
+            
+            # Prepare update
+            update = {
+                'request_id': machine_request_id,
+                'machine_id': instance_id,
+                'status': current_aws_state
+            }
+            
+            # Handle deletion request
+            if current_aws_state == 'shutting-down':
+                update['result'] = 'executing'
+                update['message'] = 'Instance is being terminated'
+                update['return_id'] = request_id
+                all_complete = False
                 
-                if is_creation:
-                    # For creation requests, check if we should timeout unknown instances
-                    current_time = int(time.time())
-                    launch_time = machine.get('launchtime', 0)
-                    if launch_time == 0:
-                        # Use current time as fallback (shouldn't happen, but safety first)
-                        launch_time = current_time
-                        logger.warning(f"Missing launch time for instance {instance_id}, using current time")
-                    unknown_duration_minutes = (current_time - launch_time) / 60
-                    logger.debug(f"Instance {instance_id} unknown for {unknown_duration_minutes:.1f} minutes")
+            elif current_aws_state == 'terminated':
+                update['result'] = 'succeed'
+                update['message'] = 'Instance terminated successfully'
+                update['return_id'] = request_id
+                # Mark for removal from database
+                machines_to_remove.append({
+                    'request_id': machine_request_id,
+                    'machine_id': instance_id
+                })
                     
-                    if unknown_duration_minutes > 30:  # Shorter timeout for unknown state
-                        updated_machine['result'] = 'fail'
-                        updated_machine['message'] = f'Instance in unknown state for {unknown_duration_minutes:.1f} minutes - assuming failed'
-                        updated_machine['status'] = 'failed'
-                        any_failed = True
-                        
-                        # Try to terminate to clean up
-                        try:
-                            self.ec2.terminate_instances(InstanceIds=[instance_id])
-                            updated_machine['message'] += ' - termination attempted'
-                            logger.warning(f"Attempted to terminate unknown instance {instance_id}")
-                        except Exception as e:
-                            logger.error(f"Failed to terminate unknown instance {instance_id}: {e}")
-                    else:
-                        updated_machine['result'] = 'executing'
-                        updated_machine['message'] = 'Instance state unknown - retrying'
-                        all_complete = False
-                        
-                else:  # deletion request
-                    # For deletion, unknown state usually means already terminated or never existed
-                    updated_machine['result'] = 'succeed'  # Assume successful termination
-                    updated_machine['message'] = 'Instance not found - assumed terminated'
-                    updated_machine['status'] = 'terminated'
-            
-            else:
-                # Normal state handling - use AWS state as status
-                updated_machine['status'] = current_aws_state
+            elif current_aws_state == 'running':
+                update['result'] = 'fail'
+                update['message'] = 'Instance still running - termination may have failed'
+                update['return_id'] = request_id
+                any_failed = True
+                all_complete = False
                 
-                if is_creation:
-                    # Handle creation request result determination
-                    if current_aws_state == 'pending':
-                        # Check if instance has been pending for too long (timeout)
-                        current_time = int(time.time())
-                        launch_time = machine.get('launchtime', 0)
-                        if launch_time == 0:
-                            # Use current time as fallback (shouldn't happen, but safety first)
-                            launch_time = current_time
-                            logger.warning(f"Missing launch time for instance {instance_id}, using current time")
-                        pending_duration_minutes = (current_time - launch_time) / 60
-                        logger.debug(f"Instance {instance_id} pending for {pending_duration_minutes:.1f} minutes")
-                        
-                        if pending_duration_minutes > 60:  # More than 60 minutes
-                            # Instance is stuck in pending state - mark as failed
-                            updated_machine['result'] = 'fail'
-                            updated_machine['message'] = f'Instance stuck in pending state for {pending_duration_minutes:.1f} minutes - timeout exceeded'
-                            updated_machine['status'] = 'failed'  # Override AWS state since it's stuck
-                            any_failed = True
-                            
-                            # Automatically terminate the stuck instance
-                            try:
-                                self.ec2.terminate_instances(InstanceIds=[instance_id])
-                                updated_machine['message'] += ' - instance terminated due to timeout'
-                                logger.warning(f"Terminated stuck instance {instance_id} after {pending_duration_minutes:.1f} minutes in pending state")
-                            except Exception as e:
-                                logger.error(f"Failed to terminate stuck instance {instance_id}: {e}")
-                                updated_machine['message'] += ' - failed to terminate instance'
-                                
-                        else:
-                            # Still within timeout window, keep as executing
-                            updated_machine['result'] = 'executing'
-                            updated_machine['message'] = f'Instance is pending ({pending_duration_minutes:.1f} minutes)'
-                            all_complete = False
-                            
-                    elif current_aws_state == 'running':
-                        updated_machine['result'] = 'succeed'
-                        updated_machine['message'] = 'Instance running successfully'
-                        
-                        # Add InstanceId tagging for running instances (post-provision process)
-                        if self.instance_id_tag_enabled:
-                            # Check if we haven't already tagged this instance
-                            if not machine.get('tagInstanceId', False):
-                                logger.debug(f"Instance {instance_id} is running, adding InstanceId tag")
-                                self._tag_instance_with_instance_id(instance_id)
-                                # Mark as tagged to avoid duplicate attempts
-                                updated_machine['tagInstanceId'] = True
-                                
-                        # Update machine properties if available
-                        if instance_details.get('name'):
-                            updated_machine['name'] = instance_details['name']
-                        if instance_details.get('privateIpAddress'):
-                            updated_machine['privateIpAddress'] = instance_details['privateIpAddress']
-                        if instance_details.get('publicIpAddress'):
-                            updated_machine['publicIpAddress'] = instance_details['publicIpAddress']
-                        if instance_details.get('publicDnsName'):
-                            updated_machine['publicDnsName'] = instance_details['publicDnsName']
-                        if instance_details.get('lifecycle'):
-                            updated_machine['lifeCycleType'] = instance_details['lifecycle']
-                        logger.debug(f"Instance {instance_id} is running successfully")
-                    else:  # stopping, stopped, shutting-down, terminated, etc.
-                        updated_machine['result'] = 'fail'
-                        updated_machine['message'] = f'Instance creation failed: {current_aws_state}'
-                        any_failed = True
-                        logger.debug(f"Instance {instance_id} creation failed with state: {current_aws_state}")
-                        
-                else:  # deletion request
-                    # Handle deletion request result determination
-                    if current_aws_state == 'shutting-down':
-                        updated_machine['result'] = 'executing'
-                        updated_machine['message'] = 'Instance is being terminated'
-                        all_complete = False
-                        logger.debug(f"Instance {instance_id} is shutting down")
-                        
-                    elif current_aws_state == 'terminated':
-                        updated_machine['result'] = 'succeed'
-                        updated_machine['message'] = 'Instance terminated successfully'
-                        # Mark for removal from database
-                        machines_to_remove.append({
-                            'request_id': updated_machine.get('reqId', ''),
-                            'machine_id': instance_id
-                        })
-                        logger.debug(f"Instance {instance_id} terminated successfully, marked for removal")
-                            
-                    elif current_aws_state == 'running':
-                        # Instance still running - termination may have failed or not started
-                        updated_machine['result'] = 'fail'
-                        updated_machine['message'] = 'Instance still running - termination may have failed'
-                        any_failed = True
-                        all_complete = False
-                        logger.debug(f"Instance {instance_id} still running after termination request")
-                        
-                    else:  # pending, stopping, stopped, etc
-                        updated_machine['result'] = 'fail'
-                        updated_machine['message'] = f'Instance termination failed: {current_aws_state}'
-                        any_failed = True
-                        all_complete = False
-                        logger.debug(f"Instance {instance_id} termination failed with state: {current_aws_state}")
+            else:  # pending, stopping, stopped, etc
+                update['result'] = 'fail'
+                update['message'] = f'Instance termination failed: {current_aws_state}'
+                update['return_id'] = request_id
+                any_failed = True
+                all_complete = False
             
-            # Update database if status result, or network info changed
-            status_changed = updated_machine['status'] != machine.get('status')
-            result_changed = updated_machine['result'] != machine.get('result')
-            lifecycle_changed = updated_machine.get('lifeCycleType') != machine.get('lifeCycleType')
-            network_info_changed = (
-                updated_machine.get('privateIpAddress') != machine.get('privateIpAddress') or
-                updated_machine.get('publicIpAddress') != machine.get('publicIpAddress') or
-                updated_machine.get('publicDnsName') != machine.get('publicDnsName') or
-                updated_machine.get('name') != machine.get('name')
-            )
+            # Add to updates list
+            updates.append(update)
             
-            if (status_changed or result_changed or network_info_changed or lifecycle_changed):
-                logger.debug(f"Updating database for instance {instance_id} - status_changed: {status_changed}, result_changed: {result_changed}, network_info_changed: {network_info_changed}, lifecycle_changed: {lifecycle_changed}")
-                db_manager.update_machine_status(
-                    updated_machine.get('reqId', ''),
-                    instance_id,
-                    updated_machine['status'],
-                    updated_machine['result'],
-                    updated_machine['message'],
-                    updated_machine.get('retId', '')
-                )
-                # Also update the fields if they changed
-                if network_info_changed or lifecycle_changed:
-                    logger.debug(f"Updating  info for instance {instance_id}")
-                    db_manager.update_machine_info(
-                        updated_machine.get('reqId', ''),
-                        instance_id,
-                        updated_machine.get('privateIpAddress'),
-                        updated_machine.get('publicIpAddress'),
-                        updated_machine.get('publicDnsName'),
-                        updated_machine.get('name'),
-                        updated_machine.get('lifeCycleType'),
-                        updated_machine.get('tagInstanceId')
-                    )
+            # Update response machine object
+            updated_machine['result'] = update.get('result', machine.get('result'))
+            updated_machine['message'] = update.get('message', machine.get('message'))
+            if 'return_id' in update:
+                updated_machine['retId'] = update['return_id']
             
             updated_machines.append(updated_machine)
         
-        # Handle request status update for creation requests
-        if is_creation and request_data:
-            # Update the overall request status in database
-            final_status = 'complete_with_error' if any_failed else 'complete' if all_complete else 'running'
+        # Apply updates to database
+        if updates:
+            logger.debug(f"Performing batch update for {len(updates)} machines")
+            batch_result = db_manager.update_machines(updates)
+            logger.debug(f"Batch update result: {batch_result}")
         
         # Handle machine removal for deletion requests
-        if is_deletion and machines_to_remove:
-            logger.debug(f"Removing {len(machines_to_remove)} machines from database")
-            for machine_info in machines_to_remove:
-                db_manager.remove_machine_from_request(
-                    machine_info['request_id'],
-                    machine_info['machine_id']
-                )
-            logger.info(f"Removed {len(machines_to_remove)} terminated machines from database")
+        if machines_to_remove:
+            self._remove_terminated_machines(machines_to_remove)
         
+        # Build final response
+        return self._build_final_response(request_id, updated_machines, all_complete, any_failed)
+
+    def _build_final_response(self, request_id: str, updated_machines: List[Dict], 
+                            all_complete: bool, any_failed: bool) -> Dict[str, Any]:
+        """Common function to build final response for both creation and deletion"""
         # Determine overall request status for response
         if all_complete:
             final_status = 'complete_with_error' if any_failed else 'complete'
@@ -2253,12 +2629,39 @@ class AWSClient:
         # Periodic cleanup call
         self.periodic_cleanup()
         
+        logger.debug(f"Request: {request_id}, status: {final_status}, total machines: {len(updated_machines)}, machines: {updated_machines}")
         return {
             'status': final_status,
             'machines': updated_machines,
             'message': message,
             'requestId': request_id
         }
+
+    def _remove_terminated_machines(self, machines_to_remove: List[Dict]) -> None:
+        """Remove terminated machines from database"""
+        logger.debug(f"Removing {len(machines_to_remove)} machines from database")
+        # Group removals by request_id for efficiency
+        removals_by_request = defaultdict(list)
+        
+        for removal in machines_to_remove:
+            removals_by_request[removal['request_id']].append(removal['machine_id'])
+        
+        # Cleanup launch template versions BEFORE removing fleet requests
+        fleet_requests_to_cleanup = set()
+        for req_id in removals_by_request.keys():
+            if req_id.startswith('fleet-'):
+                fleet_requests_to_cleanup.add(req_id)
+        
+        # Cleanup BEFORE removing the requests
+        for fleet_request_id in fleet_requests_to_cleanup:
+            self._cleanup_launch_template_versions_for_fleet(fleet_request_id)
+        
+        # Remove machines
+        for req_id, machine_ids in removals_by_request.items():
+            for machine_id in machine_ids:
+                db_manager.remove_machine_from_request(req_id, machine_id)
+        
+        logger.info(f"Removed {len(machines_to_remove)} terminated machines from database")
 
     def periodic_cleanup(self):
         """Call this periodically to perform cleanup if needed"""
@@ -2314,23 +2717,42 @@ class AWSClient:
                 return
             
             instances_to_terminate = []
+            updates = []  # Collect batch updates
             
             for instance_id in active_instances:
                 if self._has_spot_termination_notice(instance_id):
                     logger.info(f"Spot instance {instance_id} has reclaim notice, marking for termination")
                     instances_to_terminate.append(instance_id)
+                    
+                    # Collect update for batch operation
+                    machine_info = db_manager.get_request_for_machine(instance_id)
+                    if machine_info and machine_info.get('request'):
+                        updates.append({
+                            'request_id': machine_info['request']['requestId'],
+                            'machine_id': instance_id,
+                            'status': 'shutting-down',
+                            'result': 'executing',
+                            'message': 'Spot instance terminated due to AWS reclaim notice',
+                            'return_id': f"spot-reclaim-{int(time.time())}"
+                        })
             
             # Terminate all instances with reclaim notices
             if instances_to_terminate:
                 logger.info(f"Terminating {len(instances_to_terminate)} Spot instances with reclaim notices")
                 termination_request_id = self.terminate_instances(instances_to_terminate)
                 
-                # Update status for tracking
-                for instance_id in instances_to_terminate:
-                    self._update_machine_reclaim_status(instance_id, termination_request_id)
-                    
+                # Update return_id in our collected updates
+                for update in updates:
+                    update['return_id'] = termination_request_id
+                
+                # Apply batch update if we have updates
+                if updates:
+                    batch_result = db_manager.update_machines(updates)
+                    logger.debug(f"Batch updated {batch_result['success_count']} spot reclaim instances, failed: {batch_result['failed_count']}")
+                        
         except Exception as e:
             logger.error(f"Error in Spot reclaim check: {e}")
+            logger.debug(f"Spot reclaim check stack trace:", exc_info=True)
 
     def _get_active_spot_instances(self) -> List[str]:
         """Get all active Spot instances from database"""
@@ -2396,20 +2818,3 @@ class AWSClient:
         except Exception as e:
             logger.error(f"Unexpected error checking termination notice for {instance_id}: {e}")
             return False
-
-    def _update_machine_reclaim_status(self, instance_id: str, termination_request_id: str):
-        """Update machine status to reflect reclaim termination"""
-        try:
-            machine_info = db_manager.get_request_for_machine(instance_id)
-            if machine_info and machine_info.get('request'):
-                db_manager.update_machine_status(
-                    machine_info['request']['requestId'],
-                    instance_id,
-                    'shutting-down',
-                    'executing',
-                    'Spot instance terminated due to AWS reclaim notice',
-                    termination_request_id
-                )
-                logger.debug(f"Updated reclaim status for instance {instance_id}")
-        except Exception as e:
-            logger.error(f"Error updating reclaim status for {instance_id}: {e}")

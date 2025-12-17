@@ -28,19 +28,25 @@ def main():
         
         # Handle empty case directly without initializing RequestManager (input_data = {'machines': []})
         if not machines:
-            output_data = {"status": "complete", "message": "", "requests": []}
+            output_data = {"requests": [], "status": "complete", "message": "No instances found to return"}
+            logger.info(f"getReturnRequests output: {output_data}")
             write_output_json(output_data)
             sys.exit(0)
         
         request_manager = RequestManager()
-        with request_manager.resource_context():
-            output_data = request_manager.get_return_requests(machines)
+        output_data = request_manager.get_return_requests(machines)
         
+        logger.info(f"getReturnRequests output: {output_data}")
         write_output_json(output_data)
         sys.exit(0)
         
     except Exception as e:
         logger.error(f"Error in requestReturnMachines: {e}")
+        error_output = {
+            "requests": [],
+            "status": "complete",
+            "message": str(e)
+        }
         write_output_json({"error": str(e)})
         sys.exit(1)
 

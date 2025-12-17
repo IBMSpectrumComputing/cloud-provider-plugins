@@ -120,7 +120,7 @@ class TemplateManager:
             validation_errors = self._validate_templates_structure(templates_data)
             
             if validation_errors:
-                logger.warning(f"Template validation errors: {validation_errors}")
+                logger.warning(f"Template validation warnings: {validation_errors}")
                 templates_data["validation_errors"] = validation_errors
             else:
                 logger.debug("Templates loaded and validated successfully")
@@ -293,7 +293,7 @@ class TemplateManager:
         # Validate allocationStrategy
         if 'allocationStrategy' in template:
             strategy = template['allocationStrategy']
-            valid_strategies = ['CapacityOptimized', 'LowestPrice', 'Diversified']
+            valid_strategies = ['capacityOptimized', 'lowestPrice', 'diversified']
             if not isinstance(strategy, str):
                 errors.append(f"Template '{template_id}': allocationStrategy must be a string")
             elif strategy not in valid_strategies:
@@ -542,100 +542,132 @@ class TemplateManager:
         
         return errors
 
-    def _get_spot_price_history(self, instance_type: str) -> List[float]:
+    def _get_current_spot_price(self, template: Dict[str, Any]) -> float:
         """
-        Get spot price history for the last hour for a specific instance type.
-        Returns list of spot prices or empty list if unavailable.
+        Calculate current market spot price for a template
+        Returns the minimum spot price across all availability zones for the template
         """
-        if not self.aws_initialized or not self.ec2_client or not instance_type:
-            return []
+        # Check if AWS client is available
+        if not self.aws_initialized or not self.ec2_client:
+            logger.debug("AWS client not initialized, cannot calculate market spot price")
+            return 0.0
+
+        # Validate required parameters
+        vm_type = template.get('vmType')
+        subnet_id = template.get('subnetId')
         
+        if not vm_type or not subnet_id:
+            logger.debug("Missing vmType or subnetId for spot price calculation")
+            return 0.0
+
+        # Check allocation strategy - only proceed if allocationStrategy is present AND its value is 'lowestprice'
+        allocation_strategy = template.get('allocationStrategy')
+        if allocation_strategy is not None:
+            # allocationStrategy exists, check if it's 'lowestprice'
+            if allocation_strategy.lower() != 'lowestprice':
+                logger.debug("Market spot price is only supported for lowestPrice allocation strategy")
+                return 0.0
+
+        # Check for multiple VM types - not supported in Java
+        if ',' in vm_type:
+            logger.debug("Market spot price is not supported for multiple vm types")
+            return 0.0
+
         try:
-            # Get spot price history for the last hour
-            end_time = datetime.utcnow()
-            start_time = end_time - timedelta(hours=1)
+            # Get single instance type
+            instance_type = vm_type.strip()
             
-            response = self.ec2_client.describe_spot_price_history(
-                InstanceTypes=[instance_type],
-                ProductDescriptions=['Linux/UNIX'],
-                StartTime=start_time,
-                EndTime=end_time
-            )
+            # Get all subnets and their AZs
+            subnet_ids = [s.strip() for s in subnet_id.split(',') if s.strip()]
             
-            prices = [float(record['SpotPrice']) for record in response['SpotPriceHistory']]
+            # Describe subnets to get availability zones
+            subnet_response = self.ec2_client.describe_subnets(SubnetIds=subnet_ids)
+            subnets = subnet_response.get('Subnets', [])
+            
+            if not subnets:
+                logger.error("Could not retrieve subnet information")
+                return 0.0
 
-            logger.debug(f"Retrieved {len(prices)} spot price records for {instance_type}")
-            return prices
-            
-        except (ClientError, BotoCoreError) as e:
-            logger.warning(f"Failed to get spot price history for {instance_type}: {e}")
-            return []
+            min_price = float('inf')
+            found_prices = False
 
-    def _is_spot_price_viable(self, template: Dict[str, Any]) -> bool:
-        """
-        Check if template's spot price is viable based on historical market prices.
-        Returns False if minimum historical price > template spot price, True otherwise.
-        """
-        if 'spotPrice' not in template:
-            return True  # Not a spot instance template
-            
-        # Lazy initialize AWS client if needed (in case templates changed)
-        if not self.aws_initialized and self._has_spot_templates():
-            self._lazy_init_aws_if_needed()
-            
-        if not self.aws_initialized:
-            logger.warning(f"AWS client not initialized, cannot validate spot price for template {template.get('templateId')}")
-            return True  # Can't validate without AWS client
-            
-        spot_price = float(template['spotPrice'])
-        instance_type = template.get('vmType')
-        
-        if not instance_type:
-            logger.warning(f"Template {template.get('templateId')} has spotPrice but no vmType, cannot validate spot price")
-            return True  # Can't validate without instance type
-        
-        historical_prices = self._get_spot_price_history(instance_type)
-        
-        if not historical_prices:
-            logger.warning(f"No historical spot price data available for {instance_type}, assuming template is viable")
-            return True  # No data available, assume it's OK
-        
-        min_historical_price = min(historical_prices)
-        
-        if spot_price < min_historical_price:
-            logger.warning(f"Template {template.get('templateId')} has spot price {spot_price} which is below minimum historical price {min_historical_price} for {instance_type}")
-            return False
-        
-        logger.debug(f"Template {template.get('templateId')} spot price {spot_price} is viable (min historical: {min_historical_price})")
-        return True
+            # Check spot price in each availability zone
+            for subnet in subnets:
+                az = subnet.get('AvailabilityZone')
+                if not az:
+                    continue
+
+                # Get current spot price for this AZ
+                spot_response = self.ec2_client.describe_spot_price_history(
+                    InstanceTypes=[instance_type],
+                    ProductDescriptions=['Linux/UNIX'],
+                    StartTime=datetime.utcnow(),
+                    AvailabilityZone=az,
+                    MaxResults=1
+                )
+
+                spot_history = spot_response.get('SpotPriceHistory', [])
+                if spot_history:
+                    current_price = float(spot_history[0]['SpotPrice'])
+                    if current_price < min_price:
+                        min_price = current_price
+                    found_prices = True
+                    logger.debug(f"Found spot price {current_price} for {instance_type} in {az}")
+
+            if found_prices and min_price != float('inf'):
+                logger.debug(f"Minimum spot price for template {template.get('templateId')} vm type {instance_type} is {min_price}")
+                return min_price
+            else:
+                logger.error("Could not retrieve current spot price")
+                return 0.0
+
+        except ClientError as e:
+            error_code = e.response['Error']['Code']
+            if error_code == 'InvalidSubnetID.NotFound':
+                logger.error(f"Invalid subnet ID in template {template.get('templateId')}: {e}")
+            else:
+                logger.error(f"AWS API error calculating spot price for template {template.get('templateId')}: {e}")
+            return 0.0
+        except Exception as e:
+            logger.error(f"Unexpected error calculating spot price for template {template.get('templateId')}: {e}")
+            return 0.0
 
     def get_available_templates(self) -> Dict[str, Any]:
-        """Get all available templates, filtering out those with non-viable spot prices"""
+        """Get all available templates with market spot prices added"""
         if not self.templates or 'templates' not in self.templates:
             return self.templates
             
         available_templates = []
-        disabled_spot_templates = []
         
         for template in self.templates.get('templates', []):
-            # Check if template has spot price and if it's viable
-            if 'spotPrice' in template and not self._is_spot_price_viable(template):
-                disabled_spot_templates.append(template.get('templateId', 'unknown'))
-                continue
+            template_copy = template.copy()
+            
+            # Ensure spotPrice is always a float
+            if 'spotPrice' in template_copy:
+                try:
+                    template_copy['spotPrice'] = float(template_copy['spotPrice'])
+                except (ValueError, TypeError):
+                    # If conversion fails, remove the invalid spotPrice
+                    template_copy.pop('spotPrice', None)
+                    logger.warning(f"Template {template.get('templateId')} has invalid spotPrice: {template['spotPrice']}")
+            
+            # Add market spot price for Spot instances and Spot Fleet with lowestPrice strategy
+            if 'spotPrice' in template_copy:
+                market_price = self._get_current_spot_price(template)
+                # Ensure marketSpotPrice is always a float
+                try:
+                    template_copy['marketSpotPrice'] = float(market_price)
+                except (ValueError, TypeError):
+                    # If conversion fails, set to 0.0 or handle as needed
+                    template_copy['marketSpotPrice'] = 0.0
+                    logger.warning(f"Template {template.get('templateId')} has invalid marketSpotPrice: {market_price}")
                 
-            available_templates.append(template)
-        
-        if disabled_spot_templates:
-            logger.info(f"Disabled templates due to non-viable spot prices: {disabled_spot_templates}")
+                logger.debug(f"Template {template.get('templateId')}: spotPrice={template_copy['spotPrice']}, marketSpotPrice={template_copy['marketSpotPrice']}")
+            
+            available_templates.append(template_copy)
         
         result = self.templates.copy()
         result['templates'] = available_templates
-        
-        # Add info about disabled spot templates if any
-        if disabled_spot_templates:
-            if 'validation_errors' not in result:
-                result['validation_errors'] = []
-            result['validation_errors'].append(f"Disabled templates with non-viable spot prices: {', '.join(disabled_spot_templates)}")
         
         return result
 
