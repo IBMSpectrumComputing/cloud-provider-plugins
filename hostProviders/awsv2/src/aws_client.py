@@ -490,17 +490,37 @@ class AWSClient:
                 
                 subnet_id = template.get('subnetId')
                 if subnet_id:
-                    # For multiple subnets, choose one for this batch
+                    # For multiple subnets, choose the one with max capacity
                     if ',' in subnet_id:
                         subnets = [s.strip() for s in subnet_id.split(',') if s.strip()]
                         if subnets:
-                            # Random selection ensures distribution across batches
-                            chosen_subnet = random.choice(subnets)
-                            instances_params['SubnetId'] = chosen_subnet
-                            logger.debug(f"Batch {batch_num + 1}: Multiple subnets available: {subnets}, chosen: {chosen_subnet}")
+                            try:
+                                # Get capacity for all subnets
+                                response = self.ec2.describe_subnets(SubnetIds=subnets)
+
+                                # Find subnet with maximum available IPs
+                                best_subnet = None
+                                max_capacity = 0
+                                for subnet in response['Subnets']:
+                                    capacity = subnet['AvailableIpAddressCount']
+                                    if capacity > max_capacity:
+                                        max_capacity = capacity
+                                        best_subnet = subnet['SubnetId']
+
+                                chosen_subnet = best_subnet or random.choice(subnets)
+                                instances_params['SubnetId'] = chosen_subnet
+                                logger.debug(f"Batch {batch_num + 1}: Multiple subnets available. Chose {chosen_subnet} with {max_capacity} IPs")
+
+                            except Exception as e:
+                                # Fallback to random if capacity check fails
+                                logger.warning(f"Batch {batch_num + 1}: Failed to check subnet capacity: {e}")
+                                chosen_subnet = random.choice(subnets)
+                                instances_params['SubnetId'] = chosen_subnet
+                                logger.debug(f"Batch {batch_num + 1}: Fallback to random subnet: {chosen_subnet}")
                         else:
                             logger.warning(f"Batch {batch_num + 1}: No valid subnets found in subnetId string")
                     else:
+                        # Single subnet
                         instances_params['SubnetId'] = subnet_id
                         logger.debug(f"Batch {batch_num + 1}: Using SubnetId: {subnet_id}")
                             
@@ -791,13 +811,32 @@ class AWSClient:
             logger.warning("No valid subnets found in subnetId string")
             return {}
         
-        # Select subnet (random for multiple, single for one)
-        chosen_subnet = random.choice(subnets) if len(subnets) > 1 else subnets[0]
-        
-        # Log appropriately based on count
+        # If multiple subnets, choose the one with maximum available IPs
         if len(subnets) > 1:
-            logger.debug(f"Multiple subnets available: {subnets}, chosen: {chosen_subnet}")
+            logger.debug(f"Multiple subnets available: {subnets}")
+            try:
+                # Get capacity for all subnets
+                response = self.ec2.describe_subnets(SubnetIds=subnets)
+
+                # Find subnet with maximum available IPs
+                best_subnet = None
+                max_capacity = 0
+                for subnet in response['Subnets']:
+                    capacity = subnet['AvailableIpAddressCount']
+                    if capacity > max_capacity:
+                        max_capacity = capacity
+                        best_subnet = subnet['SubnetId']
+
+                chosen_subnet = best_subnet or random.choice(subnets)
+                logger.debug(f"Multiple subnets available. Chose {chosen_subnet} with {max_capacity} available IPs")
+
+            except Exception as e:
+                # Fallback to random if capacity check fails
+                logger.warning(f"Failed to check subnet capacity: {e}")
+                chosen_subnet = random.choice(subnets)
+                logger.debug(f"Fallback to random subnet: {chosen_subnet}")
         else:
+            chosen_subnet = subnets[0]
             logger.debug(f"Single subnet config: SubnetId={chosen_subnet}, Groups={security_groups}")
         
         return {
@@ -1826,7 +1865,7 @@ class AWSClient:
                 try:
                     # Single AWS API call for the entire chunk
                     response = self.ec2.terminate_instances(InstanceIds=chunk)
-                    logger.debug(f"Chunk {chunk_idx + 1}: Terminate API call successful")
+                    logger.debug(f"Chunk {chunk_idx + 1}: Terminate API call successful.  Response: {response}")
                     
                     # Get the instance states from response
                     for instance in response.get('TerminatingInstances', []):
