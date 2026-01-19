@@ -7,7 +7,7 @@ _num_of_opts="$#"
 _cmd_opt_str="$@"
 
 RC_JAVA_PLUGINS="aws azure cyclecloud google"
-RC_SCRIPT_PLUGINS="ibmcloudgen2 openstack"
+RC_SCRIPT_PLUGINS="awsv2 ibmcloudgen2 openstack"
 ALL_RC_PLUGSIN="$RC_JAVA_PLUGINS $RC_SCRIPT_PLUGINS"
 #RC_TARGET_FILE="brel_root.rc_plugin.tar.gz"
 RC_TARGET_FILE="brel_root.hf_providers_java_plugin.tar.gz"
