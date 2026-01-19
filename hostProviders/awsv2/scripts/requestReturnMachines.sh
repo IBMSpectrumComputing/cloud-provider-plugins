@@ -10,4 +10,4 @@ homeDir="$(cd "$scriptDir" && cd .. && pwd)"
 
 export PYTHONPATH=$scriptDir
 
-python3 $scriptDir/../src/request_return_machines.py $inJson $home
+python3 $scriptDir/request_return_machines.py $inJson $home

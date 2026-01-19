@@ -655,7 +655,7 @@ class AWSClient:
         logger.debug("Building user data from template...")
         user_data = ""
         script_dir = os.path.dirname(os.path.abspath(__file__))
-        user_data_file = os.path.join(script_dir, "../scripts/user_data.sh")
+        user_data_file = os.path.join(script_dir, "user_data.sh")
         logger.debug(f"Looking for user data file: {user_data_file}")
         
         if os.path.exists(user_data_file):
