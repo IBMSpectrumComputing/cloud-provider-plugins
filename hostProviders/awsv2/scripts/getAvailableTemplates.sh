@@ -10,4 +10,4 @@ homeDir="$(cd "$scriptDir" && cd .. && pwd)"
 
 export PYTHONPATH=$scriptDir
 
-python3 $scriptDir/../src/get_available_templates.py $inJson $homeDir
+python3 $scriptDir/get_available_templates.py $inJson $homeDir
