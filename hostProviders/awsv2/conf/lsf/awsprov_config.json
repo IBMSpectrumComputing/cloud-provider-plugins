@@ -1,0 +1,5 @@
+{
+  "LogLevel": "INFO",		  
+  "AWS_CREDENTIAL_FILE": "/home/aws/credentials",	
+  "AWS_REGION": "us-west-2"		
+}

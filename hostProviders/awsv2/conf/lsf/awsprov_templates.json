@@ -1,0 +1,39 @@
+{
+    "templates": [
+        {
+            "templateId": "Template-VM-1",
+            "maxNumber": 0,
+            "attributes": {
+                "type": ["String", "X86_64"],
+                "ncores": ["Numeric", "1"],
+                "ncpus": ["Numeric", "1"],
+                "mem": ["Numeric", "1024"],
+                "awshost": ["Boolean", "1"]
+            },
+            "imageId": "ami-27a1",
+            "subnetId": "subnet-b573",
+            "vmType": "t2.micro",            
+            "keyName": "Lsf-Key",            
+            "securityGroupIds": [""],
+            "instanceTags" : "group=project1",
+            "userData": "zone=us_west_2a"
+        },
+        {
+            "templateId": "Template-VM-2",
+            "maxNumber": 0,
+            "attributes": {
+                "type": ["String", "X86_64"],
+                "ncores": ["Numeric", "4"],
+                "ncpus": ["Numeric", "2"],
+                "mem": ["Numeric", "2048"],
+                "awshost": ["Boolean", "1"]
+            },
+            "imageId": "ami-27b1",
+            "subnetId": "subnet-b5738",
+            "vmType": "t2.micro",            
+            "keyName": "Lsf-Key",            
+            "securityGroupIds": [""],
+            "userData": "zone=us_west_2b"
+        }
+    ]
+}
