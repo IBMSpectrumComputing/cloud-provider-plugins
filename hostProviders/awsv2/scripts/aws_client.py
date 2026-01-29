@@ -400,11 +400,12 @@ class AWSClient:
             logger.info(f"Processing batch {batch_num + 1}/{batches_needed}: {batch_size} instances")
             
             # Build the base parameters for this batch
+            # Set MinCount=1 instead of batch_size to allow partial fulfillment
             instances_params = {
-                'MinCount': batch_size,
+                'MinCount': 1,
                 'MaxCount': batch_size
             }
-            logger.debug(f"Batch {batch_num + 1}: MinCount={batch_size}, MaxCount={batch_size}")
+            logger.debug(f"Batch {batch_num + 1}: MinCount=1, MaxCount={batch_size}")
             
             # Add launch template OR individual parameters
             launch_template_id = template.get('launchTemplateId')
@@ -572,11 +573,20 @@ class AWSClient:
             
             try:
                 # Single API call for this batch
+                # AWS will create between MinCount (1) and MaxCount (batch_size) instances
+                # based on available resources (IP addresses, capacity, etc.)
                 response = self.ec2.run_instances(**instances_params)
                 instances = response['Instances']
                 batch_instance_ids = [instance.get('InstanceId') for instance in instances]
-                logger.info(f"Batch {batch_num + 1}: Successfully created {len(batch_instance_ids)}")
+                
+                # Log how many instances were actually created
+                actual_count = len(batch_instance_ids)
+                logger.info(f"Batch {batch_num + 1}: Successfully created {actual_count} out of requested {batch_size}")
                 logger.debug(f"Batch {batch_num + 1}: Successfully created instances: {batch_instance_ids}")
+                
+                # Check if we got fewer instances than requested (due to resource constraints)
+                if actual_count < batch_size:
+                    logger.warning(f"Batch {batch_num + 1}: Created only {actual_count} out of {batch_size} requested instances due to resource constraints.")
                 
                 # Collect machine data for this batch - don't update DB yet
                 for instance in instances:
