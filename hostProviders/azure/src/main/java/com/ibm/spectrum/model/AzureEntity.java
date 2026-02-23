@@ -280,7 +280,12 @@ public class AzureEntity {
 
     public void setRsp(Integer code, String msg) {
         this.code = code;
-        this.msg = msg;
+        // For ebrokerd error handling, format error messages with "Error Code:" prefix
+        if (code != null && code != 0 && msg != null && !msg.startsWith("Error Code:")) {
+            this.msg = "Error Code: " + code + " " + msg;
+        } else {
+            this.msg = msg;
+        }
     }
 
     /** (Non Javadoc)
