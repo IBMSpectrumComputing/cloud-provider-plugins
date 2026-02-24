@@ -121,9 +121,15 @@ def main():
      logging.error("Fail to create any VSI")
      outJson = RequestMachinesOutput()
      if error:
-        outJson.message = error
-     logging.critical(outJson)
-     print(outJson)
+        # For ebrokerd to disable template, must exit with non-zero code
+        # Print error message to stderr with "Error Code:" format
+        outJson.message = error  # Contains "Error Code: " format
+        logging.critical(outJson)
+        print(outJson)
+        sys.exit(1) 
+     else:
+        logging.critical(outJson)
+        print(outJson)
   else:
      createdInstanceList = instanceList
 
