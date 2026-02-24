@@ -25,6 +25,7 @@ import os,sys
 import logging
 import random
 import traceback
+import json
 
 from nextgen_rc_config import NextGenTemplate, NextGenConfig
 from nextgen_utils import RCInstance
@@ -339,11 +340,11 @@ def create_multi_instances(args):
     try:
       if hasattr(e, 'response') and hasattr(e.response, 'text'):
         error_json = json.loads(e.response.text)
-        ogging.error("Parsed error JSON: %s", json.dumps(error_json, indent=2))
+        logging.error("Parsed error JSON: %s", json.dumps(error_json, indent=2))
     except:
       pass
 
-    newInstance['error'] = f"{message} (code: {code})"
+    newInstance['error'] = f"{message}. Error Code: {code}"
     return newInstance
 
   return newInstance
