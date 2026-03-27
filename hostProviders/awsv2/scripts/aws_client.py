@@ -92,8 +92,8 @@ class AWSClient:
             endpoint_url = config_manager.get_aws_endpoint_url()
             if endpoint_url:
                 logger.debug(f"Using custom endpoint URL: {endpoint_url}")
-                self.ec2 = self.session.client('ec2', endpoint_url=endpoint_url)
-                self.ec2_resource = self.session.resource('ec2', endpoint_url=endpoint_url)
+                self.ec2 = self.session.client('ec2', endpoint_url=endpoint_url, config=self.config)
+                self.ec2_resource = self.session.resource('ec2', endpoint_url=endpoint_url, config=self.config)
                 logger.debug("EC2 clients reconfigured with custom endpoint")
                 
             # Get AWS key file configuration
@@ -155,7 +155,15 @@ class AWSClient:
             
             # Extract expiration from credentials if available
             if credentials and 'Expiration' in credentials:
-                self.credentials_expiry = credentials['Expiration']
+                expiration = credentials['Expiration']
+                if hasattr(expiration, 'timestamp'):          # datetime object
+                    self.credentials_expiry = expiration.timestamp()
+                elif isinstance(expiration, str):              # ISO format string
+                    from dateutil import parser
+                    self.credentials_expiry = parser.parse(expiration).timestamp()
+                else:
+                    # Assume it's already a number (int or float)
+                    self.credentials_expiry = float(expiration)
                 logger.debug(f"Credentials expire at: {self.credentials_expiry}")
             else:
                 # Default to 1 hour for file-based or IAM credentials
@@ -210,12 +218,12 @@ class AWSClient:
         # Recreate clients
         endpoint_url = config_manager.get_aws_endpoint_url()
         if endpoint_url:
-            self.ec2 = self.session.client('ec2', endpoint_url=endpoint_url)
-            self.ec2_resource = self.session.resource('ec2', endpoint_url=endpoint_url)
+            self.ec2 = self.session.client('ec2', endpoint_url=endpoint_url, config=self.config)
+            self.ec2_resource = self.session.resource('ec2', endpoint_url=endpoint_url, config=self.config)
             logger.debug(f"Clients recreated with custom endpoint: {endpoint_url}")
         else:
-            self.ec2 = self.session.client('ec2')
-            self.ec2_resource = self.session.resource('ec2')
+            self.ec2 = self.session.client('ec2', config=self.config)
+            self.ec2_resource = self.session.resource('ec2', config=self.config)
             logger.debug("Clients recreated with default endpoint")
 
     def _test_connection(self):
@@ -2788,7 +2796,7 @@ class AWSClient:
             # Terminate all instances with reclaim notices
             if instances_to_terminate:
                 logger.info(f"Terminating {len(instances_to_terminate)} Spot instances with reclaim notices")
-                termination_request_id = self.terminate_instances(instances_to_terminate)
+                termination_request_id = self.request_return_machines(instances_to_terminate)
                 
                 # Update return_id in our collected updates
                 for update in updates:
