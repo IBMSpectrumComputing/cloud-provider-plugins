@@ -527,8 +527,8 @@ class AWSClient:
                             
             key_name = self._get_key_name(template)
             if key_name:
-                instances_params['KeyName'] = template['keyName']
-                logger.debug(f"Batch {batch_num + 1}: Using key pair: {template['keyName']}")
+                instances_params['KeyName'] = key_name
+                logger.debug(f"Batch {batch_num + 1}: Using key pair: {key_name}")
             
             # Use selected VM type (could be from multiple choices or single)
             if selected_vm_type:
@@ -1546,8 +1546,8 @@ class AWSClient:
                     # 4. Apply key pair override if specified
                     key_name = self._get_key_name(template)
                     if key_name:
-                        version_data['KeyName'] = template['keyName']
-                        logger.debug(f"Applied key pair override: {template['keyName']} for config {i}")
+                        version_data['KeyName'] = key_name
+                        logger.debug(f"Applied key pair override: {key_name} for config {i}")
                     
                     # 5. Apply IAM instance profile override if specified
                     instance_profile = template.get('instanceProfile')
