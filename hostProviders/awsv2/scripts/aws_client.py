@@ -159,8 +159,7 @@ class AWSClient:
                 if hasattr(expiration, 'timestamp'):          # datetime object
                     self.credentials_expiry = expiration.timestamp()
                 elif isinstance(expiration, str):              # ISO format string
-                    from dateutil import parser
-                    self.credentials_expiry = parser.parse(expiration).timestamp()
+                    self.credentials_expiry = datetime.fromisoformat(expiration.replace('Z', '+00:00')).timestamp()
                 else:
                     # Assume it's already a number (int or float)
                     self.credentials_expiry = float(expiration)
@@ -1815,8 +1814,8 @@ class AWSClient:
                         )
                         batch_machine_data.append(machine_data)
                         logger.debug(f"Prepared new EC2 Request Fleet instance {instance_id} for batch add")
-                
-                # BATCH ADD: Add all new machines in one operation
+
+                    # BATCH ADD: Add all new machines in one operation
                     if batch_machine_data:
                         result = db_manager.add_machines_to_request(fleet_id, batch_machine_data)
                         if result['success_count'] > 0:
@@ -2404,6 +2403,12 @@ class AWSClient:
             if not machines:
                 request_creation_time = request_data.get('time', 0)
                 current_time = int(datetime.now().timestamp() * 1000)
+
+                # Validate request_creation_time before calculating timeout
+                if not request_creation_time or request_creation_time == 0:
+                    logger.warning(f"Invalid or missing creation time for request {request_id}, using current time")
+                    request_creation_time = current_time
+
                 request_age_minutes = (current_time - request_creation_time) / 60000
                 
                 # If request is too old without any machines, mark as failed
@@ -2819,16 +2824,28 @@ class AWSClient:
             # Get all running instances
             all_requests = db_manager.get_all_requests()
             
+            # Collect all candidate instance IDs first
+            candidate_instance_ids = []
             for request in all_requests:
                 if 'machines' in request:
                     for machine in request['machines']:
-                        if (machine.get('status') in ['running', 'pending'] and 
+                        if (machine.get('status') in ['running', 'pending'] and
                             machine.get('machineId')):
-                            # Check if it's a Spot instance via EC2 API
-                            instance_id = machine['machineId']
-                            details = self.get_instance_details(instance_id)
-                            if details.get('lifecycle') == 'spot':
-                                active_instances.append(instance_id)
+                            candidate_instance_ids.append(machine['machineId'])
+
+            if not candidate_instance_ids:
+                logger.debug("No candidate instances found for Spot check")
+                return []
+
+            logger.debug(f"Checking {len(candidate_instance_ids)} candidate instances for Spot lifecycle")
+
+            # Use bulk API call to get details for all candidates
+            details_map = self.get_instance_details_bulk(candidate_instance_ids)
+
+            # Filter for Spot instances
+            for instance_id, details in details_map.items():
+                if details.get('lifecycle') == 'spot':
+                    active_instances.append(instance_id)
             
             logger.debug(f"Found {len(active_instances)} active Spot instances")
             return active_instances
