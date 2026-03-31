@@ -29,6 +29,7 @@ from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import multiprocessing
 from contextlib import contextmanager
+from utils import get_data_path
 from db_manager import db_manager
 from config_manager import config_manager
 from template_manager import TemplateManager
@@ -98,7 +99,7 @@ class AWSClient:
                 
             # Get AWS key file configuration
             self.aws_key_file = config_manager.get_aws_key_file()
-            logger.debug(f"AWS_KEY_FILE configured: {self.aws_key_file}")
+            logger.debug(f"AWS_KEY_FILE directory configured: {self.aws_key_file}")
             
             # Get spot instance termination reclaim configuration
             self.spot_terminate_on_reclaim = config_manager.get_spot_terminate_on_reclaim()
@@ -532,10 +533,7 @@ class AWSClient:
                         instances_params['SubnetId'] = subnet_id
                         logger.debug(f"Batch {batch_num + 1}: Using SubnetId: {subnet_id}")
                             
-            key_name = self._get_key_name(template)
-            if key_name:
-                instances_params['KeyName'] = key_name
-                logger.debug(f"Batch {batch_num + 1}: Using key pair: {key_name}")
+            self._apply_key_name_if_valid(instances_params, template, f"Batch {batch_num + 1}")
             
             # Use selected VM type (could be from multiple choices or single)
             if selected_vm_type:
@@ -885,30 +883,66 @@ class AWSClient:
         
         return network_interfaces
 
-    def _get_key_name(self, template: Dict) -> Optional[str]:
-        """Get key name to use - template takes precedence, then AWS_KEY_FILE"""
-        # First check if template specifies a keyName
-        if template.get('keyName'):
-            return template['keyName']
-        
-        # Then check if AWS_KEY_FILE is configured
-        if self.aws_key_file:
-            return self._get_key_name_from_file(self.aws_key_file)
-        
-        # No key specified
-        return None
-
-    def _get_key_name_from_file(self, key_file_path: str) -> str:
-        """Extract key name from key file path"""
+    def _validate_or_create_key_pair(self, key_name: str) -> bool:
+        """Validate key pair exists in AWS or create it if needed"""
         try:
-            # Common pattern: keyname.pem -> keyname
-            base_name = os.path.basename(key_file_path)
-            key_name = os.path.splitext(base_name)[0]
-            logger.debug(f"Extracted key name '{key_name}' from file: {key_file_path}")
-            return key_name
+            key_file_dir = self.aws_key_file if self.aws_key_file else get_data_path()
+            if not key_file_dir:
+                return False
+            
+            key_file_path = os.path.join(key_file_dir, f"{key_name}.pem")
+            
+            # Check local key file
+            if os.path.exists(key_file_path):
+                logger.debug(f"Local key file exists: {key_file_path}")
+                return True
+            
+            # Check AWS key pair
+            try:
+                self.ec2.describe_key_pairs(KeyNames=[key_name])
+                logger.debug(f"Key pair '{key_name}' exists in AWS")
+                return True
+            except ClientError as e:
+                if e.response['Error']['Code'] != 'InvalidKeyPair.NotFound':
+                    logger.warning(f"Error checking key pair: {e}")
+                    return False
+            
+            # Create new key pair
+            logger.info(f"Creating key pair '{key_name}'")
+            response = self.ec2.create_key_pair(KeyName=key_name)
+            
+            # Save key material
+            os.makedirs(key_file_dir, exist_ok=True)
+            with open(key_file_path, 'w') as f:
+                f.write(response['KeyMaterial'])
+            os.chmod(key_file_path, 0o400)
+            
+            logger.info(f"Key pair created: {key_file_path}")
+            return True
+            
+        except ClientError as e:
+            if e.response.get('Error', {}).get('Code') == 'InvalidKeyPair.Duplicate':
+                logger.info(f"Key pair '{key_name}' already exists")
+                return True
+            logger.error(f"Failed to create key pair: {e}")
+            return False
         except Exception as e:
-            logger.warning(f"Failed to extract key name from {key_file_path}: {e}. Using default.")
-            return "lsf-key"
+            logger.error(f"Key pair validation error: {e}")
+            return False
+
+    def _apply_key_name_if_valid(self, params_dict: Dict, template: Dict, context: str = "") -> None:
+        """Get key name from template and apply to params dict if validation succeeds"""
+        # Get key name from template or fall back to AWS_KEY_FILE
+        key_name = template.get('keyName') or self.aws_key_file
+        if not key_name:
+            return
+            
+        if self._validate_or_create_key_pair(key_name):
+            params_dict['KeyName'] = key_name
+            logger.debug(f"{context}: Using key pair: {key_name}" if context else f"Using key pair: {key_name}")
+        else:
+            logger.warning(f"{context}: Key pair '{key_name}' validation/creation failed - proceeding without KeyName" if context else f"Key pair '{key_name}' validation/creation failed - proceeding without KeyName")
+
         
     def _get_common_instance_params(self, template: Dict) -> Dict[str, Any]:
         """Get common instance parameters used across all creation methods"""
@@ -1132,9 +1166,7 @@ class AWSClient:
                 launch_spec['EbsOptimized'] = template['ebsOptimized']
 
             # Add key pair if specified
-            key_name = self._get_key_name(template)
-            if key_name:
-                launch_spec['KeyName'] = key_name
+            self._apply_key_name_if_valid(launch_spec, template, "Spot Fleet")
                 
             # Add network configuration if subnet is provided
             if subnet:
@@ -1551,10 +1583,7 @@ class AWSClient:
                         logger.debug(f"Applied instance type override: {template['vmType']} for config {i}")
                     
                     # 4. Apply key pair override if specified
-                    key_name = self._get_key_name(template)
-                    if key_name:
-                        version_data['KeyName'] = key_name
-                        logger.debug(f"Applied key pair override: {key_name} for config {i}")
+                    self._apply_key_name_if_valid(version_data, template, f"EC2 Fleet config {i}")
                     
                     # 5. Apply IAM instance profile override if specified
                     instance_profile = template.get('instanceProfile')
