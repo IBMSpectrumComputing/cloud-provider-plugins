@@ -892,12 +892,12 @@ class AWSClient:
             
             key_file_path = os.path.join(key_file_dir, f"{key_name}.pem")
             
-            # Check local key file
+            # Check if local key file exists
             if os.path.exists(key_file_path):
                 logger.debug(f"Local key file exists: {key_file_path}")
                 return True
             
-            # Check AWS key pair
+            # Check if key pair exists in AWS
             try:
                 self.ec2.describe_key_pairs(KeyNames=[key_name])
                 logger.debug(f"Key pair '{key_name}' exists in AWS")
@@ -908,7 +908,7 @@ class AWSClient:
                     return False
             
             # Create new key pair
-            logger.info(f"Creating key pair '{key_name}'")
+            logger.debug(f"Creating new key pair '{key_name}' in AWS")
             response = self.ec2.create_key_pair(KeyName=key_name)
             
             # Save key material
@@ -917,12 +917,12 @@ class AWSClient:
                 f.write(response['KeyMaterial'])
             os.chmod(key_file_path, 0o400)
             
-            logger.info(f"Key pair created: {key_file_path}")
+            logger.debug(f"The new key pair {key_name} is created and stored at {key_file_dir}.")
             return True
             
         except ClientError as e:
             if e.response.get('Error', {}).get('Code') == 'InvalidKeyPair.Duplicate':
-                logger.info(f"Key pair '{key_name}' already exists")
+                logger.debug(f"Key pair '{key_name}' already exists")
                 return True
             logger.error(f"Failed to create key pair: {e}")
             return False
@@ -932,8 +932,7 @@ class AWSClient:
 
     def _apply_key_name_if_valid(self, params_dict: Dict, template: Dict, context: str = "") -> None:
         """Get key name from template and apply to params dict if validation succeeds"""
-        # Get key name from template or fall back to AWS_KEY_FILE
-        key_name = template.get('keyName') or self.aws_key_file
+        key_name = template.get('keyName')
         if not key_name:
             return
             
