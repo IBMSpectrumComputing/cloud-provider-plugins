@@ -22,6 +22,7 @@ from datetime import datetime
 from typing import Dict, List, Any, Optional
 from botocore.exceptions import ClientError
 from botocore.config import Config
+import subprocess
 import logging
 import json
 import base64
@@ -891,13 +892,12 @@ class AWSClient:
                 return False
             
             key_file_path = os.path.join(key_file_dir, f"{key_name}.pem")
+            local_key_exists = os.path.exists(key_file_path)
             
-            # Check if local key file exists
-            if os.path.exists(key_file_path):
+            if local_key_exists:
                 logger.debug(f"Local key file exists: {key_file_path}")
-                return True
             
-            # Check if key pair exists in AWS
+            # Always check if key pair exists in AWS (even if local file exists)
             try:
                 self.ec2.describe_key_pairs(KeyNames=[key_name])
                 logger.debug(f"Key pair '{key_name}' exists in AWS")
@@ -906,8 +906,12 @@ class AWSClient:
                 if e.response['Error']['Code'] != 'InvalidKeyPair.NotFound':
                     logger.warning(f"Error checking key pair: {e}")
                     return False
+                # Key pair not found in AWS
+                if local_key_exists:
+                    logger.info(f"Local key file exists but key pair '{key_name}' not found in AWS. Attempting to import public key.")
+                    return self._import_key_pair_from_local(key_name, key_file_path)
             
-            # Create new key pair
+            # Create new key pair (only if no local file exists)
             logger.debug(f"Creating new key pair '{key_name}' in AWS")
             response = self.ec2.create_key_pair(KeyName=key_name)
             
@@ -930,6 +934,64 @@ class AWSClient:
             logger.error(f"Key pair validation error: {e}")
             return False
 
+    def _import_key_pair_from_local(self, key_name: str, key_file_path: str) -> bool:
+        """Import public key to AWS from local PEM file using ssh-keygen"""
+        try:
+            # Extract public key from private key file
+            # Use ssh-keygen to extract public key from private key
+            result = subprocess.run(
+                ['ssh-keygen', '-y', '-f', key_file_path],
+                capture_output=True,
+                text=True,
+                timeout=10
+            )
+            
+            if result.returncode != 0:
+                logger.warning(f"Failed to extract public key from {key_file_path}")
+                if result.stderr:
+                    logger.warning(f"ssh-keygen error: {result.stderr.strip()}")
+                logger.warning(f"Instance will be created without key pair. You will not be able to SSH into the instance.")
+                return False
+            
+            public_key_material = result.stdout.strip()
+            
+            if not public_key_material:
+                logger.warning(f"No public key material extracted from {key_file_path}")
+                logger.warning(f"Instance will be created without key pair. You will not be able to SSH into the instance.")
+                return False
+            
+            # Import the public key to AWS
+            logger.info(f"Importing public key for '{key_name}' to AWS")
+            self.ec2.import_key_pair(
+                KeyName=key_name,
+                PublicKeyMaterial=public_key_material
+            )
+            
+            logger.info(f"Successfully imported key pair '{key_name}' to AWS from local file")
+            return True
+            
+        except subprocess.TimeoutExpired:
+            logger.warning(f"Timeout while extracting public key from {key_file_path} (exceeded 10 seconds)")
+            logger.warning(f"Instance will be created without key pair. You will not be able to SSH into the instance.")
+            return False
+        except FileNotFoundError:
+            logger.warning(f"ssh-keygen command not found. Cannot automatically import key pair '{key_name}'.")
+            logger.warning(f"Instance will be created without key pair. You will not be able to SSH into the instance.")
+            logger.info(f"To manually import the key pair, run: aws ec2 import-key-pair --key-name {key_name} --public-key-material fileb://<(ssh-keygen -y -f {key_file_path})")
+            return False
+        except ClientError as e:
+            error_code = e.response.get('Error', {}).get('Code', '')
+            if error_code == 'InvalidKeyPair.Duplicate':
+                logger.debug(f"Key pair '{key_name}' already exists in AWS")
+                return True
+            logger.warning(f"Failed to import key pair '{key_name}' to AWS: {e}")
+            logger.warning(f"Instance will be created without key pair. You will not be able to SSH into the instance.")
+            return False
+        except Exception as e:
+            logger.warning(f"Unexpected error importing key pair from local file: {e}")
+            logger.warning(f"Instance will be created without key pair. You will not be able to SSH into the instance.")
+            return False
+
     def _apply_key_name_if_valid(self, params_dict: Dict, template: Dict, context: str = "") -> None:
         """Get key name from template and apply to params dict if validation succeeds"""
         key_name = template.get('keyName')
@@ -940,7 +1002,9 @@ class AWSClient:
             params_dict['KeyName'] = key_name
             logger.debug(f"{context}: Using key pair: {key_name}" if context else f"Using key pair: {key_name}")
         else:
-            logger.warning(f"{context}: Key pair '{key_name}' validation/creation failed - proceeding without KeyName" if context else f"Key pair '{key_name}' validation/creation failed - proceeding without KeyName")
+            prefix = f"{context}: " if context else ""
+            logger.warning(f"{prefix}Key pair '{key_name}' validation/creation failed - proceeding without KeyName")
+            logger.warning(f"{prefix}Instance will be created without SSH key pair access")
 
         
     def _get_common_instance_params(self, template: Dict) -> Dict[str, Any]:
