@@ -85,3 +85,18 @@ def get_config_path():
     os.makedirs(conf_dir, exist_ok=True)
     return conf_dir
 
+def get_data_path():
+    """Get the data directory path for storing key files"""
+    conf_dir = os.environ.get('PRO_CONF_DIR')
+    if conf_dir:
+        return os.path.join(conf_dir, 'data')
+    
+    lsf_top = os.environ.get('PRO_LSF_TOP')
+    provider_name = os.environ.get('PROVIDER_NAME', 'aws')
+    
+    if not lsf_top:
+        logging.warning("Cannot determine key file directory - PRO_CONF_DIR and PRO_LSF_TOP not set")
+        return None
+    
+    return os.path.join(lsf_top, 'conf', 'resource_connector', provider_name, 'data')
+
