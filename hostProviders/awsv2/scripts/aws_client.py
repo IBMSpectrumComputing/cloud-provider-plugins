@@ -22,6 +22,7 @@ from datetime import datetime
 from typing import Dict, List, Any, Optional
 from botocore.exceptions import ClientError
 from botocore.config import Config
+import subprocess
 import logging
 import json
 import base64
@@ -29,6 +30,7 @@ from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import multiprocessing
 from contextlib import contextmanager
+from utils import get_data_path
 from db_manager import db_manager
 from config_manager import config_manager
 from template_manager import TemplateManager
@@ -92,13 +94,13 @@ class AWSClient:
             endpoint_url = config_manager.get_aws_endpoint_url()
             if endpoint_url:
                 logger.debug(f"Using custom endpoint URL: {endpoint_url}")
-                self.ec2 = self.session.client('ec2', endpoint_url=endpoint_url)
-                self.ec2_resource = self.session.resource('ec2', endpoint_url=endpoint_url)
+                self.ec2 = self.session.client('ec2', endpoint_url=endpoint_url, config=self.config)
+                self.ec2_resource = self.session.resource('ec2', endpoint_url=endpoint_url, config=self.config)
                 logger.debug("EC2 clients reconfigured with custom endpoint")
                 
             # Get AWS key file configuration
             self.aws_key_file = config_manager.get_aws_key_file()
-            logger.debug(f"AWS_KEY_FILE configured: {self.aws_key_file}")
+            logger.debug(f"AWS_KEY_FILE directory configured: {self.aws_key_file}")
             
             # Get spot instance termination reclaim configuration
             self.spot_terminate_on_reclaim = config_manager.get_spot_terminate_on_reclaim()
@@ -155,7 +157,14 @@ class AWSClient:
             
             # Extract expiration from credentials if available
             if credentials and 'Expiration' in credentials:
-                self.credentials_expiry = credentials['Expiration']
+                expiration = credentials['Expiration']
+                if hasattr(expiration, 'timestamp'):          # datetime object
+                    self.credentials_expiry = expiration.timestamp()
+                elif isinstance(expiration, str):              # ISO format string
+                    self.credentials_expiry = datetime.fromisoformat(expiration.replace('Z', '+00:00')).timestamp()
+                else:
+                    # Assume it's already a number (int or float)
+                    self.credentials_expiry = float(expiration)
                 logger.debug(f"Credentials expire at: {self.credentials_expiry}")
             else:
                 # Default to 1 hour for file-based or IAM credentials
@@ -210,12 +219,12 @@ class AWSClient:
         # Recreate clients
         endpoint_url = config_manager.get_aws_endpoint_url()
         if endpoint_url:
-            self.ec2 = self.session.client('ec2', endpoint_url=endpoint_url)
-            self.ec2_resource = self.session.resource('ec2', endpoint_url=endpoint_url)
+            self.ec2 = self.session.client('ec2', endpoint_url=endpoint_url, config=self.config)
+            self.ec2_resource = self.session.resource('ec2', endpoint_url=endpoint_url, config=self.config)
             logger.debug(f"Clients recreated with custom endpoint: {endpoint_url}")
         else:
-            self.ec2 = self.session.client('ec2')
-            self.ec2_resource = self.session.resource('ec2')
+            self.ec2 = self.session.client('ec2', config=self.config)
+            self.ec2_resource = self.session.resource('ec2', config=self.config)
             logger.debug("Clients recreated with default endpoint")
 
     def _test_connection(self):
@@ -525,10 +534,7 @@ class AWSClient:
                         instances_params['SubnetId'] = subnet_id
                         logger.debug(f"Batch {batch_num + 1}: Using SubnetId: {subnet_id}")
                             
-            key_name = self._get_key_name(template)
-            if key_name:
-                instances_params['KeyName'] = template['keyName']
-                logger.debug(f"Batch {batch_num + 1}: Using key pair: {template['keyName']}")
+            self._apply_key_name_if_valid(instances_params, template, f"Batch {batch_num + 1}")
             
             # Use selected VM type (could be from multiple choices or single)
             if selected_vm_type:
@@ -878,30 +884,128 @@ class AWSClient:
         
         return network_interfaces
 
-    def _get_key_name(self, template: Dict) -> Optional[str]:
-        """Get key name to use - template takes precedence, then AWS_KEY_FILE"""
-        # First check if template specifies a keyName
-        if template.get('keyName'):
-            return template['keyName']
-        
-        # Then check if AWS_KEY_FILE is configured
-        if self.aws_key_file:
-            return self._get_key_name_from_file(self.aws_key_file)
-        
-        # No key specified
-        return None
-
-    def _get_key_name_from_file(self, key_file_path: str) -> str:
-        """Extract key name from key file path"""
+    def _validate_or_create_key_pair(self, key_name: str) -> bool:
+        """Validate key pair exists in AWS or create it if needed"""
         try:
-            # Common pattern: keyname.pem -> keyname
-            base_name = os.path.basename(key_file_path)
-            key_name = os.path.splitext(base_name)[0]
-            logger.debug(f"Extracted key name '{key_name}' from file: {key_file_path}")
-            return key_name
+            key_file_dir = self.aws_key_file if self.aws_key_file else get_data_path()
+            if not key_file_dir:
+                return False
+            
+            key_file_path = os.path.join(key_file_dir, f"{key_name}.pem")
+            local_key_exists = os.path.exists(key_file_path)
+            
+            if local_key_exists:
+                logger.debug(f"Local key file exists: {key_file_path}")
+            
+            # Always check if key pair exists in AWS (even if local file exists)
+            try:
+                self.ec2.describe_key_pairs(KeyNames=[key_name])
+                logger.debug(f"Key pair '{key_name}' exists in AWS")
+                return True
+            except ClientError as e:
+                if e.response['Error']['Code'] != 'InvalidKeyPair.NotFound':
+                    logger.warning(f"Error checking key pair: {e}")
+                    return False
+                # Key pair not found in AWS
+                if local_key_exists:
+                    logger.info(f"Local key file exists but key pair '{key_name}' not found in AWS. Attempting to import public key.")
+                    return self._import_key_pair_from_local(key_name, key_file_path)
+            
+            # Create new key pair (only if no local file exists)
+            logger.debug(f"Creating new key pair '{key_name}' in AWS")
+            response = self.ec2.create_key_pair(KeyName=key_name)
+            
+            # Save key material
+            os.makedirs(key_file_dir, exist_ok=True)
+            with open(key_file_path, 'w') as f:
+                f.write(response['KeyMaterial'])
+            os.chmod(key_file_path, 0o400)
+            
+            logger.debug(f"The new key pair {key_name} is created and stored at {key_file_dir}.")
+            return True
+            
+        except ClientError as e:
+            if e.response.get('Error', {}).get('Code') == 'InvalidKeyPair.Duplicate':
+                logger.debug(f"Key pair '{key_name}' already exists")
+                return True
+            logger.error(f"Failed to create key pair: {e}")
+            return False
         except Exception as e:
-            logger.warning(f"Failed to extract key name from {key_file_path}: {e}. Using default.")
-            return "lsf-key"
+            logger.error(f"Key pair validation error: {e}")
+            return False
+
+    def _import_key_pair_from_local(self, key_name: str, key_file_path: str) -> bool:
+        """Import public key to AWS from local PEM file using ssh-keygen"""
+        try:
+            # Extract public key from private key file
+            # Use ssh-keygen to extract public key from private key
+            result = subprocess.run(
+                ['ssh-keygen', '-y', '-f', key_file_path],
+                capture_output=True,
+                text=True,
+                timeout=10
+            )
+            
+            if result.returncode != 0:
+                logger.warning(f"Failed to extract public key from {key_file_path}")
+                if result.stderr:
+                    logger.warning(f"ssh-keygen error: {result.stderr.strip()}")
+                logger.warning(f"Instance will be created without key pair. You will not be able to SSH into the instance.")
+                return False
+            
+            public_key_material = result.stdout.strip()
+            
+            if not public_key_material:
+                logger.warning(f"No public key material extracted from {key_file_path}")
+                logger.warning(f"Instance will be created without key pair. You will not be able to SSH into the instance.")
+                return False
+            
+            # Import the public key to AWS
+            logger.info(f"Importing public key for '{key_name}' to AWS")
+            self.ec2.import_key_pair(
+                KeyName=key_name,
+                PublicKeyMaterial=public_key_material
+            )
+            
+            logger.info(f"Successfully imported key pair '{key_name}' to AWS from local file")
+            return True
+            
+        except subprocess.TimeoutExpired:
+            logger.warning(f"Timeout while extracting public key from {key_file_path} (exceeded 10 seconds)")
+            logger.warning(f"Instance will be created without key pair. You will not be able to SSH into the instance.")
+            return False
+        except FileNotFoundError:
+            logger.warning(f"ssh-keygen command not found. Cannot automatically import key pair '{key_name}'.")
+            logger.warning(f"Instance will be created without key pair. You will not be able to SSH into the instance.")
+            logger.info(f"To manually import the key pair, run: aws ec2 import-key-pair --key-name {key_name} --public-key-material fileb://<(ssh-keygen -y -f {key_file_path})")
+            return False
+        except ClientError as e:
+            error_code = e.response.get('Error', {}).get('Code', '')
+            if error_code == 'InvalidKeyPair.Duplicate':
+                logger.debug(f"Key pair '{key_name}' already exists in AWS")
+                return True
+            logger.warning(f"Failed to import key pair '{key_name}' to AWS: {e}")
+            logger.warning(f"Instance will be created without key pair. You will not be able to SSH into the instance.")
+            return False
+        except Exception as e:
+            logger.warning(f"Unexpected error importing key pair from local file: {e}")
+            logger.warning(f"Instance will be created without key pair. You will not be able to SSH into the instance.")
+            return False
+
+    def _apply_key_name_if_valid(self, params_dict: Dict, template: Dict, context: str = "") -> None:
+        """Get key name from template and apply to params dict if validation succeeds"""
+        key_name = template.get('keyName')
+        if not key_name:
+            return
+            
+        if self._validate_or_create_key_pair(key_name):
+            params_dict['KeyName'] = key_name
+            logger.debug(f"{context}: Using key pair: {key_name}" if context else f"Using key pair: {key_name}")
+        else:
+            prefix = f"{context}: " if context else ""
+            logger.warning(f"{prefix}Key pair '{key_name}' validation/creation failed - proceeding without KeyName")
+            logger.warning(f"{prefix}Instance will be created without SSH key pair access")
+
         
     def _get_common_instance_params(self, template: Dict) -> Dict[str, Any]:
         """Get common instance parameters used across all creation methods"""
@@ -1125,9 +1229,7 @@ class AWSClient:
                 launch_spec['EbsOptimized'] = template['ebsOptimized']
 
             # Add key pair if specified
-            key_name = self._get_key_name(template)
-            if key_name:
-                launch_spec['KeyName'] = key_name
+            self._apply_key_name_if_valid(launch_spec, template, "Spot Fleet")
                 
             # Add network configuration if subnet is provided
             if subnet:
@@ -1544,10 +1646,7 @@ class AWSClient:
                         logger.debug(f"Applied instance type override: {template['vmType']} for config {i}")
                     
                     # 4. Apply key pair override if specified
-                    key_name = self._get_key_name(template)
-                    if key_name:
-                        version_data['KeyName'] = template['keyName']
-                        logger.debug(f"Applied key pair override: {template['keyName']} for config {i}")
+                    self._apply_key_name_if_valid(version_data, template, f"EC2 Fleet config {i}")
                     
                     # 5. Apply IAM instance profile override if specified
                     instance_profile = template.get('instanceProfile')
@@ -1807,8 +1906,8 @@ class AWSClient:
                         )
                         batch_machine_data.append(machine_data)
                         logger.debug(f"Prepared new EC2 Request Fleet instance {instance_id} for batch add")
-                
-                # BATCH ADD: Add all new machines in one operation
+
+                    # BATCH ADD: Add all new machines in one operation
                     if batch_machine_data:
                         result = db_manager.add_machines_to_request(fleet_id, batch_machine_data)
                         if result['success_count'] > 0:
@@ -2396,6 +2495,12 @@ class AWSClient:
             if not machines:
                 request_creation_time = request_data.get('time', 0)
                 current_time = int(datetime.now().timestamp() * 1000)
+
+                # Validate request_creation_time before calculating timeout
+                if not request_creation_time or request_creation_time == 0:
+                    logger.warning(f"Invalid or missing creation time for request {request_id}, using current time")
+                    request_creation_time = current_time
+
                 request_age_minutes = (current_time - request_creation_time) / 60000
                 
                 # If request is too old without any machines, mark as failed
@@ -2788,7 +2893,7 @@ class AWSClient:
             # Terminate all instances with reclaim notices
             if instances_to_terminate:
                 logger.info(f"Terminating {len(instances_to_terminate)} Spot instances with reclaim notices")
-                termination_request_id = self.terminate_instances(instances_to_terminate)
+                termination_request_id = self.request_return_machines(instances_to_terminate)
                 
                 # Update return_id in our collected updates
                 for update in updates:
@@ -2811,16 +2916,28 @@ class AWSClient:
             # Get all running instances
             all_requests = db_manager.get_all_requests()
             
+            # Collect all candidate instance IDs first
+            candidate_instance_ids = []
             for request in all_requests:
                 if 'machines' in request:
                     for machine in request['machines']:
-                        if (machine.get('status') in ['running', 'pending'] and 
+                        if (machine.get('status') in ['running', 'pending'] and
                             machine.get('machineId')):
-                            # Check if it's a Spot instance via EC2 API
-                            instance_id = machine['machineId']
-                            details = self.get_instance_details(instance_id)
-                            if details.get('lifecycle') == 'spot':
-                                active_instances.append(instance_id)
+                            candidate_instance_ids.append(machine['machineId'])
+
+            if not candidate_instance_ids:
+                logger.debug("No candidate instances found for Spot check")
+                return []
+
+            logger.debug(f"Checking {len(candidate_instance_ids)} candidate instances for Spot lifecycle")
+
+            # Use bulk API call to get details for all candidates
+            details_map = self.get_instance_details_bulk(candidate_instance_ids)
+
+            # Filter for Spot instances
+            for instance_id, details in details_map.items():
+                if details.get('lifecycle') == 'spot':
+                    active_instances.append(instance_id)
             
             logger.debug(f"Found {len(active_instances)} active Spot instances")
             return active_instances
