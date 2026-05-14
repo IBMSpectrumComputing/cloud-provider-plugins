@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/bash
 # This script:
 #    - should be called asrequestReturnMachines -f input.json
 #    - exit with 0 if calling succeed and result will be in the stdOut
