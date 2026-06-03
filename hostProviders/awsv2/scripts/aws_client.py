@@ -1020,20 +1020,26 @@ class AWSClient:
         logger.debug(f"Common params: {params}")
         return params
         
-    def _build_machine_data_template(self, template: Dict, request_id: str, rc_account: str = 'default') -> Dict[str, Any]:
+    def _build_machine_data_template(self, template: Dict, request_id: str, rc_account: str = 'default', ncores: int = None, nthreads: int = None) -> Dict[str, Any]:
         """Build base machine data template - reusable for all instance types"""
         logger.debug(f"Building machine data template for request {request_id}")
         common_params = self._get_common_instance_params(template)
+
+        # Use actual values from AWS if provided, otherwise fall back to template values
+        actual_ncores = ncores if ncores is not None else common_params['ncores']
+        actual_nthreads = nthreads if nthreads is not None else common_params['nthreads']
+        logger.debug(f"Using ncores={actual_ncores} (provided={ncores}, template={common_params['ncores']})")
+        logger.debug(f"Using nthreads={actual_nthreads} (provided={nthreads}, template={common_params['nthreads']})")
         
         template_data = {
             "template": common_params['template_id'],
             "result": "executing",
             "status": "pending",
             "privateIpAddress": "",
-            "publicIpAddress": "", 
+            "publicIpAddress": "",
             "publicDnsName": "",
-            "ncores": common_params['ncores'],
-            "nthreads": common_params['nthreads'],
+            "ncores": actual_ncores,
+            "nthreads": actual_nthreads,
             "rcAccount": rc_account,
             "lifeCycleType": "",
             "tagInstanceId": False,
@@ -1045,12 +1051,12 @@ class AWSClient:
         logger.debug(f"Machine data template: {template_data}")
         return template_data
 
-    def _create_machine_data(self, instance_id: str, template: Dict, request_id: str, 
-                            rc_account: str = "default", name: str = None, private_ip: str = "", 
-                            public_ip: str = "", public_dns: str = "") -> Dict[str, Any]:
+    def _create_machine_data(self, instance_id: str, template: Dict, request_id: str,
+                            rc_account: str = "default", name: str = None, private_ip: str = "",
+                            public_ip: str = "", public_dns: str = "", ncores: int = None, nthreads: int = None) -> Dict[str, Any]:
         """Create complete machine data for database entry"""
         logger.debug(f"Creating machine data for instance {instance_id}")
-        base_data = self._build_machine_data_template(template, request_id, rc_account)
+        base_data = self._build_machine_data_template(template, request_id, rc_account, ncores, nthreads)
         
         base_data.update({
             "machineId": instance_id,
@@ -1058,7 +1064,7 @@ class AWSClient:
             "privateIpAddress": private_ip,
             "publicIpAddress": public_ip,
             "publicDnsName": public_dns
-        })        
+        })
         logger.debug(f"Complete machine data: {base_data}")
         return base_data
 
@@ -1313,12 +1319,17 @@ class AWSClient:
                     # Collect all machine data for batch addition
                     batch_machine_data = []
                     for instance_id in new_instance_ids:
+                        # Get actual CPU info from the instance
+                        cpu_info = self._get_instance_cpu_info(instance_id)
+                        logger.debug(f"Spot Fleet instance {instance_id} has ncores={cpu_info['ncores']}, nthreads={cpu_info['nthreads']}")
                         machine_data = self._create_machine_data(
                             instance_id=instance_id,
                             template=template,
                             request_id=fleet_id,
                             rc_account=rc_account,
-                            name=f"host-{instance_id}"
+                            name=f"host-{instance_id}",
+                            ncores=cpu_info['ncores'],
+                            nthreads=cpu_info['nthreads']
                         )
                         batch_machine_data.append(machine_data)
                         logger.debug(f"Prepared new Spot Fleet instance {instance_id} for batch add")
@@ -1380,12 +1391,16 @@ class AWSClient:
             logger.debug("Encoded user data retrieved")
             
             # Calculate slot-based capacity
+            # For EC2 Fleet with slot-based capacity, 'count' is already the number of slots requested
+            # We should use it directly as TotalTargetCapacity, not multiply by ncpus
             max_number = template.get('maxNumber', 1)
             attributes = template.get('attributes', {})
             ncpus = int(attributes.get('ncpus', ['Numeric', '1'])[1])
             
-            total_slots = min(count, max_number * ncpus)
-            logger.debug(f"Capacity calculation - max_number: {max_number}, ncpus: {ncpus}, total_slots: {total_slots}")
+            # For slot-based capacity: count is the number of slots, not instances
+            # AWS will launch instances with appropriate WeightedCapacity to fulfill this slot count
+            total_slots = count
+            logger.debug(f"Capacity calculation - requested count (slots): {count}, max_number: {max_number}, ncpus: {ncpus}, total_slots: {total_slots}")
             
             # Handle ondemand ratio
             ratio = template.get('onDemandTargetCapacityRatio')
@@ -1462,13 +1477,18 @@ class AWSClient:
                     logger.debug(f"Found {len(instance_ids)} instances in fleet response")
                     
                     for instance_id in instance_ids:
+                        # Get actual CPU info from the instance (like Java plugin does)
+                        cpu_info = self._get_instance_cpu_info(instance_id)
+                        logger.debug(f"Instant EC2 Fleet instance {instance_id} has ncores={cpu_info['ncores']}, nthreads={cpu_info['nthreads']}")
                         # Use helper for machine data creation
                         machine_data = self._create_machine_data(
                             instance_id=instance_id,
                             template=template,
                             request_id=fleet_id,
                             rc_account=rc_account,
-                            name=f"host-{instance_id}"
+                            name=f"host-{instance_id}",
+                            ncores=cpu_info['ncores'],
+                            nthreads=cpu_info['nthreads']
                         )
                         all_machine_data.append(machine_data)
                         logger.debug(f"Prepared instant fleet instance {instance_id} for batch add")
@@ -1856,6 +1876,27 @@ class AWSClient:
             logger.error(f"Error during launch template version cleanup for fleet {request_id}: {e}")
             logger.debug(f"Launch template cleanup stack trace:", exc_info=True)
             
+    def _get_instance_cpu_info(self, instance_id: str) -> Dict[str, int]:
+        """Get actual CPU information from instance - returns ncores and nthreads"""
+        try:
+            response = self.ec2.describe_instances(InstanceIds=[instance_id])
+            if response['Reservations'] and response['Reservations'][0]['Instances']:
+                instance = response['Reservations'][0]['Instances'][0]
+                cpu_options = instance.get('CpuOptions', {})
+                core_count = cpu_options.get('CoreCount', 1)
+                threads_per_core = cpu_options.get('ThreadsPerCore', 1)
+                nthreads = core_count * threads_per_core
+
+                logger.debug(f"Instance {instance_id}: CoreCount={core_count}, ThreadsPerCore={threads_per_core}, nthreads={nthreads}")
+                return {
+                    'ncores': core_count,
+                    'nthreads': nthreads
+                }
+        except Exception as e:
+            logger.error(f"Error getting CPU info for instance {instance_id}: {e}")
+
+        return {'ncores': 1, 'nthreads': 1}
+
     def _poll_ec2_fleet_instances(self, fleet_id: str) -> List[str]:
         """Poll EC2 Fleet to get launched instances - no retry logic"""
         logger.debug(f"Polling EC2 Fleet instances for {fleet_id}")
@@ -1863,7 +1904,7 @@ class AWSClient:
         try:
             # This method is only called for request fleets, so we don't need fleet type checks
             response = self.ec2.describe_fleet_instances(FleetId=fleet_id)
-            logger.debug("EC2 Fleet describe response received")    
+            logger.debug("EC2 Fleet describe response received")
             
             active_instances = response.get('ActiveInstances', [])
             active_instance_ids = [instance['InstanceId'] for instance in active_instances]
@@ -1896,13 +1937,18 @@ class AWSClient:
                     # Collect all machine data for batch addition
                     batch_machine_data = []
                     for instance_id in new_instance_ids:
+                        # Get actual CPU info from the instance
+                        cpu_info = self._get_instance_cpu_info(instance_id)
+                        logger.debug(f"EC2 Fleet instance {instance_id} has ncores={cpu_info['ncores']}, nthreads={cpu_info['nthreads']}")
                         # Use helper for machine data creation
                         machine_data = self._create_machine_data(
                             instance_id=instance_id,
                             template=template,
                             request_id=fleet_id,
                             rc_account=rc_account,
-                            name=f"host-{instance_id}"
+                            name=f"host-{instance_id}",
+                            ncores=cpu_info['ncores'],
+                            nthreads=cpu_info['nthreads']
                         )
                         batch_machine_data.append(machine_data)
                         logger.debug(f"Prepared new EC2 Request Fleet instance {instance_id} for batch add")
@@ -2622,8 +2668,27 @@ class AWSClient:
                     all_complete = False
                     
             elif current_aws_state == 'running':
-                update['result'] = 'succeed'
-                update['message'] = 'Instance running successfully'
+                # Check if hostname is valid (not placeholder)
+                instance_name = instance_details.get('name', '')
+                current_machine_name = machine.get('name', '')
+                has_valid_hostname = (
+                    instance_name and
+                    not instance_name.startswith('host-i-') and
+                    instance_name != f"host-{instance_id}"
+                )
+
+                if has_valid_hostname:
+                    # Instance fully ready with valid hostname
+                    update['result'] = 'succeed'
+                    update['message'] = 'Instance running successfully'
+                    update['name'] = instance_name
+                    updated_machine['name'] = instance_name
+                else:
+                    # Instance running but hostname not yet resolved
+                    update['result'] = 'executing'
+                    update['message'] = 'Instance running - waiting for hostname resolution'
+                    all_complete = False  # Keep request in 'running' state
+                    logger.debug(f"Instance {instance_id} is running but hostname not yet resolved (current: {instance_name or current_machine_name})")
                 
                 # Add network info if available
                 if instance_details.get('privateIpAddress'):
@@ -2635,15 +2700,12 @@ class AWSClient:
                 if instance_details.get('publicDnsName'):
                     update['public_dns'] = instance_details['publicDnsName']
                     updated_machine['publicDnsName'] = instance_details['publicDnsName']
-                if instance_details.get('name'):
-                    update['name'] = instance_details['name']
-                    updated_machine['name'] = instance_details['name']
                 if instance_details.get('lifecycle'):
                     update['lifecycle'] = instance_details['lifecycle']
                     updated_machine['lifeCycleType'] = instance_details['lifecycle']
                 
-                # InstanceId tagging for running instances
-                if self.instance_id_tag_enabled and not machine.get('tagInstanceId', False):
+                # InstanceId tagging for running instances (only if hostname is valid)
+                if has_valid_hostname and self.instance_id_tag_enabled and not machine.get('tagInstanceId', False):
                     # Schedule tagging in background
                     self._tag_instance_with_instance_id(instance_id)
                     update['tag_instance_id'] = True
