@@ -1082,12 +1082,15 @@ class AWSClient:
             
             # Build Spot Fleet request using template parameters
             # Limitation: Only Type=request is supported for spot fleet for LSF
+            # allocationStrategy is already normalized during template loading
+            allocation_strategy = template.get('allocationStrategy', 'capacityOptimized')
+            
             spot_fleet_config = {
                 'SpotFleetRequestConfig': {
                     'Type': 'request',
                     'TargetCapacity': count,
                     'IamFleetRole': fleet_role,
-                    'AllocationStrategy': template.get('allocationStrategy', 'capacityOptimized'),
+                    'AllocationStrategy': allocation_strategy,
                     'LaunchSpecifications': self._build_spot_fleet_launch_specs(template, rc_account)
                 }
             }
