@@ -18,7 +18,7 @@ import os
 import threading
 import random
 import botocore
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Any, Optional
 from botocore.exceptions import ClientError
 from botocore.config import Config
@@ -1085,12 +1085,17 @@ class AWSClient:
             # allocationStrategy is already normalized during template loading
             allocation_strategy = template.get('allocationStrategy', 'capacityOptimized')
             
+            # Set request validity to 30 minutes (internal parameter, expires before LSF's 60-min timeout)
+            valid_from = datetime.now(timezone.utc)
+            valid_until = valid_from + timedelta(minutes=30)
             spot_fleet_config = {
                 'SpotFleetRequestConfig': {
                     'Type': 'request',
                     'TargetCapacity': count,
                     'IamFleetRole': fleet_role,
                     'AllocationStrategy': allocation_strategy,
+                    'ValidFrom': valid_from,
+                    'ValidUntil': valid_until,
                     'LaunchSpecifications': self._build_spot_fleet_launch_specs(template, rc_account)
                 }
             }

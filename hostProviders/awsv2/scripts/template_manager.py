@@ -506,13 +506,11 @@ class TemplateManager:
             if not launch_template_id:
                 errors.append(f"Template '{template_id}': launchTemplateId must not be empty when specified")
         
-        # Check if it's a Spot Fleet template (has spotPrice OR fleetRole, but not ec2FleetConfig)
-        elif ('spotPrice' in template or 'fleetRole' in template) and 'ec2FleetConfig' not in template:
+        # Check if it's a Spot Fleet template (has fleetRole, but not ec2FleetConfig)
+        elif 'fleetRole' in template and 'ec2FleetConfig' not in template:
             # Validate both required keys
             if 'spotPrice' not in template:
                 errors.append(f"Template '{template_id}' is a Spot Fleet template but missing required key: spotPrice")
-            if 'fleetRole' not in template:
-                errors.append(f"Template '{template_id}' is a Spot Fleet template but missing required key: fleetRole") 
 
         # Check if it's an EC2 Fleet template
         elif 'ec2FleetConfig' in template:
