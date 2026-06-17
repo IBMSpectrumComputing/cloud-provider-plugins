@@ -294,6 +294,11 @@ class AWSClient:
         error_code = "UnknownError"
         if hasattr(error, 'response') and 'Error' in getattr(error, 'response', {}):
             error_code = error.response['Error']['Code']
+            # Log full AWS response for debugging (doesn't affect return value)
+            logger.error(f"AWS API response details: {error.response}")
+        else:
+            # Log exception details for non-AWS errors
+            logger.error(f"AWS API exception details: {str(error)}")
         
         return f"{context}. Error Code: {error_code}"
 
@@ -1086,16 +1091,16 @@ class AWSClient:
             allocation_strategy = template.get('allocationStrategy', 'capacityOptimized')
             
             # Set request validity to 30 minutes (internal parameter, expires before LSF's 60-min timeout)
-            valid_from = datetime.now(timezone.utc)
-            valid_until = valid_from + timedelta(minutes=30)
+            valid_until = datetime.now(timezone.utc) + timedelta(minutes=30)
+            valid_until = valid_until.replace(microsecond=0, tzinfo=None)
             spot_fleet_config = {
                 'SpotFleetRequestConfig': {
                     'Type': 'request',
                     'TargetCapacity': count,
                     'IamFleetRole': fleet_role,
                     'AllocationStrategy': allocation_strategy,
-                    'ValidFrom': valid_from,
                     'ValidUntil': valid_until,
+                    'TerminateInstancesWithExpiration': False,
                     'LaunchSpecifications': self._build_spot_fleet_launch_specs(template, rc_account)
                 }
             }
