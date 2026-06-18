@@ -290,14 +290,17 @@ class TemplateManager:
             elif spot_price < 0:
                 errors.append(f"Template '{template_id}': spotPrice must be non-negative")
         
-        # Validate allocationStrategy
+        # Validate and normalize allocationStrategy (case-insensitive)
         if 'allocationStrategy' in template:
             strategy = template['allocationStrategy']
-            valid_strategies = ['capacityOptimized', 'lowestPrice', 'diversified']
             if not isinstance(strategy, str):
                 errors.append(f"Template '{template_id}': allocationStrategy must be a string")
-            elif strategy not in valid_strategies:
-                errors.append(f"Template '{template_id}': allocationStrategy must be one of {valid_strategies}")
+                # Set default for invalid type
+                template['allocationStrategy'] = 'capacityOptimized'
+            else:
+                # Normalize the strategy value in the template itself
+                normalized = self._normalize_allocation_strategy(strategy, f"Template '{template_id}'")
+                template['allocationStrategy'] = normalized
         
         # Validate keyName
         if 'keyName' in template:
@@ -503,29 +506,17 @@ class TemplateManager:
             if not launch_template_id:
                 errors.append(f"Template '{template_id}': launchTemplateId must not be empty when specified")
         
-        # Check if it's a Spot Fleet template
-        elif 'fleetRole' in template:
-            missing_spot_fleet_keys = []
-            if 'fleetRole' not in template:
-                missing_spot_fleet_keys.append('fleetRole')
+        # Check if it's a Spot Fleet template (has fleetRole, but not ec2FleetConfig)
+        elif 'fleetRole' in template and 'ec2FleetConfig' not in template:
+            # Validate both required keys
             if 'spotPrice' not in template:
-                missing_spot_fleet_keys.append('spotPrice')
-            
-            if missing_spot_fleet_keys:
-                errors.append(f"Template '{template_id}' is a Spot Fleet template but missing required keys: {sorted(missing_spot_fleet_keys)}")
-        
+                errors.append(f"Template '{template_id}' is a Spot Fleet template but missing required key: spotPrice")
+
         # Check if it's an EC2 Fleet template
-        elif 'ec2FleetConfig' in template or 'onDemandTargetCapacityRatio' in template:
-            missing_ec2_fleet_keys = []
-            if 'ec2FleetConfig' not in template:
-                missing_ec2_fleet_keys.append('ec2FleetConfig')
-            if 'onDemandTargetCapacityRatio' not in template:
-                missing_ec2_fleet_keys.append('onDemandTargetCapacityRatio')
-            
-            if missing_ec2_fleet_keys:
-                errors.append(f"Template '{template_id}' is an EC2 Fleet template but missing required keys: {sorted(missing_ec2_fleet_keys)}")
-        
-        # Otherwise, it's a basic template
+        elif 'ec2FleetConfig' in template:
+            # Only ec2FleetConfig is required, onDemandTargetCapacityRatio is optional
+            pass  # No additional validation needed for EC2 Fleet templates
+
         else:
             missing_basic_keys = []
             if 'imageId' not in template:
@@ -541,6 +532,39 @@ class TemplateManager:
                 errors.append(f"Template '{template_id}' is a basic template but missing required keys: {sorted(missing_basic_keys)}")
         
         return errors
+
+    def _normalize_allocation_strategy(self, strategy: str, context: str = "") -> str:
+        """Normalize allocationStrategy to camelCase format required by boto3."""
+        if not strategy:
+            return 'capacityOptimized'  # Default
+        
+        # Mapping from lowercase to boto3 camelCase
+        strategy_map = {
+            'capacityoptimized': 'capacityOptimized',
+            'lowestprice': 'lowestPrice',
+            'diversified': 'diversified'
+        }
+        
+        # Get normalized value
+        normalized = strategy_map.get(strategy.lower())
+        
+        if not normalized:
+            # Invalid strategy - warn and use default
+            logger.warning(
+                f"{context}: Invalid allocationStrategy '{strategy}'. "
+                f"Valid values: capacityOptimized, lowestPrice, diversified. "
+                f"Using default: capacityOptimized"
+            )
+            return 'capacityOptimized'
+        
+        # Warn if input wasn't already in camelCase
+        if strategy != normalized:
+            logger.warning(
+                f"{context}: allocationStrategy '{strategy}' is not in camelCase format. "
+                f"Normalized to '{normalized}'. Please use camelCase format in templates."
+            )
+        
+        return normalized
 
     def _get_current_spot_price(self, template: Dict[str, Any]) -> float:
         """
@@ -560,11 +584,11 @@ class TemplateManager:
             logger.debug("Missing vmType or subnetId for spot price calculation")
             return 0.0
 
-        # Check allocation strategy - only proceed if allocationStrategy is present AND its value is 'lowestprice'
+        # Check allocation strategy - only proceed if allocationStrategy is present AND its value is 'lowestPrice'
         allocation_strategy = template.get('allocationStrategy')
         if allocation_strategy is not None:
-            # allocationStrategy exists, check if it's 'lowestprice'
-            if allocation_strategy.lower() != 'lowestprice':
+            # Already normalized during template loading, just check the value
+            if allocation_strategy != 'lowestPrice':
                 logger.debug("Market spot price is only supported for lowestPrice allocation strategy")
                 return 0.0
 
