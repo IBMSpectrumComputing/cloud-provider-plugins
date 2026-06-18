@@ -18,7 +18,7 @@ import os
 import threading
 import random
 import botocore
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Any, Optional
 from botocore.exceptions import ClientError
 from botocore.config import Config
@@ -292,9 +292,18 @@ class AWSClient:
         """Format error message with context and AWS error code"""
         # Extract AWS error code from ClientError
         error_code = "UnknownError"
+        error_message = ""
         if hasattr(error, 'response') and 'Error' in getattr(error, 'response', {}):
-            error_code = error.response['Error']['Code']
+            error_code = error.response['Error'].get('Code', 'UnknownError')
+            error_message = error.response['Error'].get('Message', '')
+            # Log full AWS response for debugging (doesn't affect return value)
+            logger.error(f"AWS API response details: {error.response}")
+        else:
+            # Log exception details for non-AWS errors
+            logger.error(f"AWS API exception details: {str(error)}")
         
+        if error_message:
+            return f"{context}: {error_message}. Error Code: {error_code}"
         return f"{context}. Error Code: {error_code}"
 
     def request_machines(self, template: Dict, count: int, rc_account: str = 'default') -> str:
@@ -326,7 +335,11 @@ class AWSClient:
             logger.debug(f"Creation result details: success={result.get('success')}, request_id={result.get('request_id')}")
             
             # Common result processing
-            if result and result['success']:
+            has_aws_error = bool(result and any(
+                failed_instance.get('aws_error_code') or failed_instance.get('error_code')
+                for failed_instance in result.get('failed_instances', [])
+            ))
+            if result and result['success'] and not has_aws_error:
                 request_id = result['request_id']
                 logger.info(f"Request {request_id}: Creating {count} instances/slots")
                 
@@ -1082,12 +1095,20 @@ class AWSClient:
             
             # Build Spot Fleet request using template parameters
             # Limitation: Only Type=request is supported for spot fleet for LSF
+            # allocationStrategy is already normalized during template loading
+            allocation_strategy = template.get('allocationStrategy', 'capacityOptimized')
+            
+            # Set request validity to 30 minutes (internal parameter, expires before LSF's 60-min timeout)
+            valid_until = datetime.now(timezone.utc) + timedelta(minutes=30)
+            valid_until = valid_until.replace(microsecond=0, tzinfo=None)
             spot_fleet_config = {
                 'SpotFleetRequestConfig': {
                     'Type': 'request',
                     'TargetCapacity': count,
                     'IamFleetRole': fleet_role,
-                    'AllocationStrategy': template.get('allocationStrategy', 'capacityOptimized'),
+                    'AllocationStrategy': allocation_strategy,
+                    'ValidUntil': valid_until,
+                    'TerminateInstancesWithExpiration': False,
                     'LaunchSpecifications': self._build_spot_fleet_launch_specs(template, rc_account)
                 }
             }
@@ -1503,9 +1524,13 @@ class AWSClient:
                 
                 # Handle any errors in the response
                 for error in response.get('Errors', []):
+                    error_code = error.get('ErrorCode', 'Unknown')
+                    error_message = error.get('ErrorMessage', 'Unknown error')
                     failed_instances.append({
-                        'error_code': error.get('ErrorCode', 'Unknown'),
-                        'error_message': error.get('ErrorMessage', 'Unknown error')
+                        'error': f"EC2 Fleet has errors: {error_message}. Error Code: {error_code}",
+                        'error_code': error_code,
+                        'error_message': error_message,
+                        'aws_error_code': error_code
                     })
                     logger.debug(f"Fleet error: {error}")
                     
@@ -1515,7 +1540,7 @@ class AWSClient:
                 logger.debug("Request fleet created - instances will be launched asynchronously")
                 # No instances to process immediately for request fleets
             
-            logger.debug(f"EC2 Fleet creation completed - successful_instances: {len(successful_instances)}, failed_instances: {len(failed_instances)}")
+            logger.debug(f"EC2 Fleet creation completed - successful_instances: {len(successful_instances)}, failed_instances: {len(failed_instances)}")          
             return {
                 'success': True,
                 'request_id': fleet_id,
