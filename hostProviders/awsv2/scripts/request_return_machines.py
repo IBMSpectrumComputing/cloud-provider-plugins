@@ -19,20 +19,22 @@ from utils import write_output_json, read_input_json
 
 logger = logging.getLogger(__name__)
 
+
 def main():
     logger.debug("Running requestReturnMachines script")
     try:
         input_data = read_input_json()
         logger.info(f"requestReturnMachines input: {input_data}")
         machines = input_data['machines']
-        
+
         request_manager = RequestManager()
-        output_data = request_manager.request_return_machines(machines)
-        
+        with request_manager.resource_context():
+            output_data = request_manager.request_return_machines(machines)
+
         logger.info(f"requestReturnMachines output: {output_data}")
         write_output_json(output_data)
         sys.exit(0)
-        
+
     except Exception as e:
         logger.error(f"Error in requestReturnMachines: {e}")
         error_output = {
@@ -41,6 +43,7 @@ def main():
         }
         write_output_json(error_output)
         sys.exit(1)
+
 
 if __name__ == "__main__":
     main()
