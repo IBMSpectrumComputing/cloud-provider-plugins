@@ -19,6 +19,7 @@ from template_manager import TemplateManager
 
 logger = logging.getLogger(__name__)
 
+
 def main():
     setup_logging()
     logger.debug("Running getAvailableTemplates script")
@@ -28,11 +29,12 @@ def main():
         logger.info(f"getAvailableTemplates output: {templates}")
         write_output_json(templates)
         sys.exit(0)
-        
+
     except Exception as e:
         logger.error(f"Error in getAvailableTemplates: {e}")
         write_output_json({"error": str(e)})
         sys.exit(1)
+
 
 if __name__ == "__main__":
     main()

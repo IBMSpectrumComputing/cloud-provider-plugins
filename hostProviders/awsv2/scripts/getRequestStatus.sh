@@ -1,6 +1,6 @@
 #!/bin/bash
 # This script:
-#    - should be called as requestMachines.sh -f input.json
+#    - should be called as getRequestStatus.sh -f input.json
 #    - exit with 0 if calling succeed and result will be in the stdOut
 #    - exit with 1 if calling failed and error message will be in the stdOut
 #
@@ -10,4 +10,4 @@ homeDir="$(cd "$scriptDir" && cd .. && pwd)"
 
 export PYTHONPATH=$scriptDir
 
-python3 $scriptDir/get_request_status.py $inJson $home
+python3 $scriptDir/get_request_status.py $inJson $homeDir

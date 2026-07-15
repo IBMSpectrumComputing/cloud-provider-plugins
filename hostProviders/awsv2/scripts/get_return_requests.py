@@ -19,36 +19,39 @@ from utils import write_output_json, read_input_json
 
 logger = logging.getLogger(__name__)
 
+
 def main():
     logger.debug("Running getReturnRequests script")
     try:
         input_data = read_input_json()
         logger.info(f"getReturnRequests input: {input_data}")
         machines = input_data['machines']
-        
+
         # Handle empty case directly without initializing RequestManager (input_data = {'machines': []})
         if not machines:
             output_data = {"requests": [], "status": "complete", "message": "No instances found to return"}
             logger.info(f"getReturnRequests output: {output_data}")
             write_output_json(output_data)
             sys.exit(0)
-        
+
         request_manager = RequestManager()
-        output_data = request_manager.get_return_requests(machines)
-        
+        with request_manager.resource_context():
+            output_data = request_manager.get_return_requests(machines)
+
         logger.info(f"getReturnRequests output: {output_data}")
         write_output_json(output_data)
         sys.exit(0)
-        
+
     except Exception as e:
-        logger.error(f"Error in requestReturnMachines: {e}")
+        logger.error(f"Error in getReturnRequests: {e}")
         error_output = {
             "requests": [],
             "status": "complete",
             "message": str(e)
         }
-        write_output_json({"error": str(e)})
+        write_output_json(error_output)
         sys.exit(1)
+
 
 if __name__ == "__main__":
     main()
