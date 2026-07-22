@@ -19,6 +19,7 @@ from utils import write_output_json, read_input_json
 
 logger = logging.getLogger(__name__)
 
+
 def main():
     logger.debug("Running getRequestStatus script")
     try:
@@ -26,14 +27,15 @@ def main():
         logger.info(f"getRequestStatus input: {input_data}")
         requests = input_data['requests']
         request_ids = [req['requestId'] for req in requests]
-        
+
         request_manager = RequestManager()
-        output_data = request_manager.get_request_status(request_ids)
-        
+        with request_manager.resource_context():
+            output_data = request_manager.get_request_status(request_ids)
+
         logger.info(f"getRequestStatus output: {output_data}")
         write_output_json(output_data)
         sys.exit(0)
-        
+
     except Exception as e:
         logger.error(f"Error in getRequestStatus: {e}")
         error_output = {
@@ -44,6 +46,7 @@ def main():
         }
         write_output_json(error_output)
         sys.exit(1)
+
 
 if __name__ == "__main__":
     main()

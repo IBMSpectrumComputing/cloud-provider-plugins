@@ -19,34 +19,38 @@ from utils import write_output_json, read_input_json
 
 logger = logging.getLogger(__name__)
 
+
 def main():
     logger.debug("Running requestMachines script")
+    template_id = 'unknown'
     try:
         input_data = read_input_json()
         logger.info(f"requestMachines input: {input_data}")
         template = input_data['template']
+        template_id = template.get('templateId', 'unknown')
         rc_account = input_data.get('rc_account', 'default')
-        
+
         request_manager = RequestManager()
         with request_manager.resource_context():
             output_data = request_manager.request_machines(
-                template['templateId'], 
+                template['templateId'],
                 template['machineCount'],
                 rc_account
             )
-        
+
         logger.info(f"requestMachines output: {output_data}")
         write_output_json(output_data)
         sys.exit(0)
-        
+
     except Exception as e:
-        logger.error(f"Error in requestMachines: {e}")
+        logger.error(f"Error in requestMachines for templateId={template_id}: {e}")
         error_output = {
             "requestId": None,
             "message": str(e)
         }
         write_output_json(error_output)
         sys.exit(1)
+
 
 if __name__ == "__main__":
     main()
