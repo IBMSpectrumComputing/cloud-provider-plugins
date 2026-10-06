@@ -2114,8 +2114,24 @@ class AWSClient:
             logger.error(f"Error during launch template version cleanup for fleet {request_id}: {e}")
             logger.debug(f"Launch template cleanup stack trace:", exc_info=True)
 
-    def _get_instance_cpu_info(self, instance_id: str) -> Dict[str, int]:
-        """Get actual CPU information from instance - returns ncores and nthreads"""
+    def _get_weighted_capacity(self, template: Dict[str, Any], instance_type: str) -> int:
+        """Return the WeightedCapacity for instance_type from the template's ec2FleetConfig.
+        Returns 1 if there is no ec2FleetConfig, the file is absent, or no matching Override.
+        """
+        if not template or not template.get('ec2FleetConfig'):
+            return 1
+        try:
+            config = self._load_ec2_fleet_config(template)
+            for lt_config in config.get('LaunchTemplateConfigs', []):
+                for override in lt_config.get('Overrides', []):
+                    if override.get('InstanceType') == instance_type:
+                        return int(override.get('WeightedCapacity', 1))
+        except Exception as e:
+            logger.warning(f"Could not read WeightedCapacity from ec2FleetConfig for {instance_type}: {e}")
+        return 1
+
+    def _get_instance_cpu_info(self, instance_id: str, template: Optional[Dict[str, Any]] = None) -> Dict[str, int]:
+        """Return static (AWS API) and dynamic (template values) ncores and nthreads for an instance."""
         try:
             response = self.ec2.describe_instances(InstanceIds=[instance_id])
             if response['Reservations'] and response['Reservations'][0]['Instances']:
@@ -2123,13 +2139,31 @@ class AWSClient:
                 cpu_options = instance.get('CpuOptions', {})
                 core_count = cpu_options.get('CoreCount', 1)
                 threads_per_core = cpu_options.get('ThreadsPerCore', 1)
-                nthreads = core_count * threads_per_core
+                logger.debug(
+                    f"Instance {instance_id}: raw CpuOptions CoreCount={core_count}, "
+                    f"ThreadsPerCore={threads_per_core}"
+                )
 
-                logger.debug(f"Instance {instance_id}: CoreCount={core_count}, ThreadsPerCore={threads_per_core}, nthreads={nthreads}")
-                return {
-                    'ncores': core_count,
-                    'nthreads': nthreads
-                }
+                if template is not None:
+                    actual_instance_type = instance.get('InstanceType', '')
+                    ncpus_attr = template.get('attributes', {}).get('ncpus', [None, '1'])
+                    try:
+                        ncpus = int(float(ncpus_attr[1]))
+                    except (TypeError, ValueError, IndexError):
+                        ncpus = 1
+                    weighted = self._get_weighted_capacity(template, actual_instance_type)
+                    result = ncpus * weighted
+                    logger.debug(
+                        f"Instance {instance_id} ({actual_instance_type}): "
+                        f"ncpus={ncpus} × WeightedCapacity={weighted} → ncores=nthreads={result}"
+                    )
+                    return {'ncores': result, 'nthreads': result}
+
+                # No template supplied — fall back to raw CpuOptions
+                nthreads = core_count * threads_per_core
+                logger.debug(f"Instance {instance_id}: fallback ncores={core_count}, nthreads={nthreads}")
+                return {'ncores': core_count, 'nthreads': nthreads}
+
         except Exception as e:
             logger.error(f"Error getting CPU info for instance {instance_id}: {e}")
 
@@ -3148,7 +3182,8 @@ class AWSClient:
 
                     # Get actual CPU info once — sentinel value 0 means not yet fetched
                     if machine.get('ncores', 0) == 0:
-                        cpu_info = self._get_instance_cpu_info(instance_id)
+                        tmpl = self._get_template_for_request(machine_request_id)
+                        cpu_info = self._get_instance_cpu_info(instance_id, template=tmpl)
                         logger.debug(f"Instance {instance_id} CPU info fetched: ncores={cpu_info['ncores']}, nthreads={cpu_info['nthreads']}")
                         update['ncores'] = cpu_info['ncores']
                         update['nthreads'] = cpu_info['nthreads']
