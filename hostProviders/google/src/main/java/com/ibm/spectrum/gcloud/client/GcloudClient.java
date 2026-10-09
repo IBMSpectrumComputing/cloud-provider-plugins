@@ -1157,19 +1157,20 @@ public class GcloudClient {
         String bulkOperationId = req.getReqId();
         String opStatus = null;
         String ebrokerdRequestStatus = null;
+        Operation op = null;
 
         try {
             // Query zonal or regional operation API according to allocation type
             if (HostAllocationType.ZonalBulk.toString().equals(req.getHostAllocationType())) {
                 String zone = at.getZone();
                 Compute.ZoneOperations.Get get = compute.zoneOperations().get(projectId, zone, bulkOperationId);
-                Operation op = get.setRequestHeaders(HTTP_HEADER).execute();
+                op = get.setRequestHeaders(HTTP_HEADER).execute();
                 opStatus = op.getStatus();
             } else if (HostAllocationType.RegionalBulk.toString().equals(req.getHostAllocationType())) {
                 String region = (StringUtils.isNotEmpty(at.getRegion())) ? at.getRegion() : GcloudUtil.getConfig().getGcloudRegion();
                 log.debug("Query bulk operation [" + bulkOperationId + "] on region [" + region + "].");
                 Compute.RegionOperations.Get get = compute.regionOperations().get(projectId, region, bulkOperationId);
-                Operation op = get.setRequestHeaders(HTTP_HEADER).execute();
+                op = get.setRequestHeaders(HTTP_HEADER).execute();
                 opStatus = op.getStatus();
             }
 
@@ -1200,7 +1201,22 @@ public class GcloudClient {
         if("PENDING".equals(opStatus) || "RUNNING".equals(opStatus)) {
             ebrokerdRequestStatus = GcloudConst.EBROKERD_STATE_RUNNING;
         } else if ("DONE".equals(opStatus)) {
-            ebrokerdRequestStatus = GcloudConst.EBROKERD_STATE_COMPLETE;
+            if (op != null && op.getError() != null && op.getError().getErrors() != null
+                    && !op.getError().getErrors().isEmpty()) {
+                StringBuilder sb = new StringBuilder();
+                for (Operation.Error.Errors error : op.getError().getErrors()) {
+                    if (sb.length() > 0) {
+                        sb.append("; ");
+                    }
+                    sb.append(error.getCode()).append(": ").append(error.getMessage());
+                }
+                String errorMsg = sb.toString();
+                ebrokerdRequestStatus = GcloudConst.EBROKERD_STATE_COMPLETE_WITH_ERROR;
+                req.setMsg(errorMsg);
+                log.error("BulkInsert operation [" + bulkOperationId + "] DONE with errors: " + errorMsg);
+            } else {
+                ebrokerdRequestStatus = GcloudConst.EBROKERD_STATE_COMPLETE;
+            }
         } else { // Should not happen
             ebrokerdRequestStatus = GcloudConst.EBROKERD_STATE_COMPLETE_WITH_ERROR;
         }
@@ -1267,6 +1283,9 @@ public class GcloudClient {
         }
 
         if (instances == null || instances.isEmpty()) {
+            if (GcloudConst.EBROKERD_STATE_COMPLETE_WITH_ERROR.equals(req.getStatus())) {
+                return vmMap;
+            }
             return null;
         }
 
