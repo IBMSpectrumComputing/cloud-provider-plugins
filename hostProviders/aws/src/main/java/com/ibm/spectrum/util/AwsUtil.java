@@ -1144,8 +1144,46 @@ public class AwsUtil {
 
         return true;
     }
-    
-    
+
+    /**
+     * Returns the WeightedCapacity for the given instanceType from the template's
+     * ec2FleetConfig. Reuses the existing file-read and JSON-parse
+     * path so there is no new I/O code.
+     *
+     * @param template     the AwsTemplate whose ec2FleetConfig points to policy.json
+     * @param instanceType the InstanceType string actually launched by AWS
+     * @return the matching WeightedCapacity as int, or 1 if not found / any error
+     */
+    public static int getWeightedCapacity(AwsTemplate template, String instanceType) {
+        if (template == null || StringUtils.isNullOrEmpty(template.getEc2FleetConfig())) {
+            return 1;
+        }
+        try {
+            String fileContent = replaceTargetCapacitySpecification(template);
+            CreateFleetRequest request = toObjectCaseInsensitive(fileContent, CreateFleetRequest.class);
+            if (request == null) {
+                return 1;
+            }
+            List<FleetLaunchTemplateConfigRequest> configs = request.getLaunchTemplateConfigs();
+            if (!CollectionUtils.isNullOrEmpty(configs)) {
+                for (FleetLaunchTemplateConfigRequest config : configs) {
+                    List<FleetLaunchTemplateOverridesRequest> overrides = config.getOverrides();
+                    if (!CollectionUtils.isNullOrEmpty(overrides)) {
+                        for (FleetLaunchTemplateOverridesRequest override : overrides) {
+                            if (instanceType.equals(override.getInstanceType())
+                                    && override.getWeightedCapacity() != null) {
+                                return override.getWeightedCapacity().intValue();
+                            }
+                        }
+                    }
+                }
+            }
+        } catch (Exception e) {
+            log.warn("Could not read WeightedCapacity from ec2FleetConfig for " + instanceType + ": " + e.getMessage());
+        }
+        return 1;
+    }
+
 
 
     /**
@@ -1431,13 +1469,38 @@ public class AwsUtil {
             mlaunchtime = 0L;
         awsMachine.setLaunchtime(mlaunchtime);
         
-        //Set ncores and nthreads of this machine
-        Integer ncores = instance.getCpuOptions().getCoreCount();
-        Integer nthreads = ncores * instance.getCpuOptions().getThreadsPerCore();
+        //Set ncores and nthreads: ncpus_from_template × WeightedCapacity_of_actual_InstanceType
+        Integer ncores;
+        Integer nthreads;
+        AwsTemplate tmpl = getTemplateFromFile(templateId);
+        if (tmpl != null) {
+            int ncpus = 1;
+            try {
+                List<String> ncpusAttr = tmpl.getAttributes() != null
+                        ? tmpl.getAttributes().get("ncpus") : null;
+                if (ncpusAttr != null && ncpusAttr.size() > 1) {
+                    ncpus = (int) Double.parseDouble(ncpusAttr.get(1));
+                }
+            } catch (NumberFormatException e) {
+                log.warn("Could not parse ncpus from template " + templateId + ", using 1");
+            }
+            int weightedCapacity = getWeightedCapacity(tmpl, instance.getInstanceType());
+            ncores = ncpus * weightedCapacity;
+            nthreads = ncores;
+            log.debug("Instance type: " + instance.getInstanceType()
+                    + ", ncpus=" + ncpus + " × WeightedCapacity=" + weightedCapacity
+                    + " → ncores=nthreads=" + ncores + ", templateId: " + templateId);
+        } else {
+            // Template not found — fall back to raw CpuOptions
+            ncores = instance.getCpuOptions().getCoreCount();
+            nthreads = ncores * instance.getCpuOptions().getThreadsPerCore();
+            log.debug("Instance type: " + instance.getInstanceType()
+                    + " (template not found, using CpuOptions)"
+                    + ", ncores: " + ncores + ", nthreads: " + nthreads
+                    + ", templateId: " + templateId);
+        }
         awsMachine.setNcores(ncores);
         awsMachine.setNthreads(nthreads);
-        
-        log.debug("Instance type: " + instance.getInstanceType() + ", ncores: " + ncores + ", nthreads: " + nthreads + ", templateId: " + templateId);
         
         if (log.isTraceEnabled()) {
             log.trace("End in class AwsUtil in method mapAwsInstanceToAwsMachine with return awsMachine:" + awsMachine);
