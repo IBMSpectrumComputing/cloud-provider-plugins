@@ -2144,20 +2144,31 @@ class AWSClient:
                     f"ThreadsPerCore={threads_per_core}"
                 )
 
+                # Set ncores and nthreads based on template type:
+                # - EC2 Fleet: WeightedCapacity is the slot count; ncpus is not involved.
+                # - Non-fleet (run_instances): ncpus from the template is the slot count.
+                # - Template not found: fall back to raw CpuOptions.
                 if template is not None:
                     actual_instance_type = instance.get('InstanceType', '')
+                    weighted = self._get_weighted_capacity(template, actual_instance_type)
+                    if template.get('ec2FleetConfig'):
+                        # For EC2 Fleet, WeightedCapacity is the slot count
+                        logger.debug(
+                            f"Instance {instance_id} ({actual_instance_type}): "
+                            f"EC2 Fleet WeightedCapacity={weighted} → ncores=nthreads={weighted}"
+                        )
+                        return {'ncores': weighted, 'nthreads': weighted}
+                    # Non-fleet path (run_instances): ncpus from the template is the slot count.
                     ncpus_attr = template.get('attributes', {}).get('ncpus', [None, '1'])
                     try:
                         ncpus = int(float(ncpus_attr[1]))
                     except (TypeError, ValueError, IndexError):
                         ncpus = 1
-                    weighted = self._get_weighted_capacity(template, actual_instance_type)
-                    result = ncpus * weighted
                     logger.debug(
                         f"Instance {instance_id} ({actual_instance_type}): "
-                        f"ncpus={ncpus} × WeightedCapacity={weighted} → ncores=nthreads={result}"
+                        f"ncpus={ncpus} → ncores=nthreads={ncpus}"
                     )
-                    return {'ncores': result, 'nthreads': result}
+                    return {'ncores': ncpus, 'nthreads': ncpus}
 
                 # No template supplied — fall back to raw CpuOptions
                 nthreads = core_count * threads_per_core

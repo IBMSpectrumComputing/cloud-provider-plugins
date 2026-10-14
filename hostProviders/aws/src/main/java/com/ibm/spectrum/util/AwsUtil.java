@@ -1469,27 +1469,42 @@ public class AwsUtil {
             mlaunchtime = 0L;
         awsMachine.setLaunchtime(mlaunchtime);
         
-        //Set ncores and nthreads: ncpus_from_template × WeightedCapacity_of_actual_InstanceType
+        // Set ncores and nthreads based on template type:
+        // - EC2 Fleet: WeightedCapacity IS the slot count; ncpus is not involved.
+        // - Non-fleet (run_instances): ncpus from the template is the slot count.
+        // - Template not found: fall back to raw CpuOptions.
         Integer ncores;
         Integer nthreads;
         AwsTemplate tmpl = getTemplateFromFile(templateId);
         if (tmpl != null) {
-            int ncpus = 1;
-            try {
-                List<String> ncpusAttr = tmpl.getAttributes() != null
-                        ? tmpl.getAttributes().get("ncpus") : null;
-                if (ncpusAttr != null && ncpusAttr.size() > 1) {
-                    ncpus = (int) Double.parseDouble(ncpusAttr.get(1));
+            if (!StringUtils.isNullOrEmpty(tmpl.getEc2FleetConfig())) {
+                // EC2 Fleet path: WeightedCapacity per instance type override IS the slot
+                // count (cores or threads depending on EGO_DEFINE_NCPUS). Do not multiply
+                // by ncpus — that attribute belongs to the non-fleet run_instances path only.
+                int weightedCapacity = getWeightedCapacity(tmpl, instance.getInstanceType());
+                ncores = weightedCapacity;
+                nthreads = weightedCapacity;
+                log.debug("Instance type: " + instance.getInstanceType()
+                        + ", EC2 Fleet WeightedCapacity=" + weightedCapacity
+                        + " → ncores=nthreads=" + ncores + ", templateId: " + templateId);
+            } else {
+                // Non-fleet path (run_instances): ncpus from the template is the slot count.
+                int ncpus = 1;
+                try {
+                    List<String> ncpusAttr = tmpl.getAttributes() != null
+                            ? tmpl.getAttributes().get("ncpus") : null;
+                    if (ncpusAttr != null && ncpusAttr.size() > 1) {
+                        ncpus = (int) Double.parseDouble(ncpusAttr.get(1));
+                    }
+                } catch (NumberFormatException e) {
+                    log.warn("Could not parse ncpus from template " + templateId + ", using 1");
                 }
-            } catch (NumberFormatException e) {
-                log.warn("Could not parse ncpus from template " + templateId + ", using 1");
+                ncores = ncpus;
+                nthreads = ncpus;
+                log.debug("Instance type: " + instance.getInstanceType()
+                        + ", ncpus=" + ncpus
+                        + " → ncores=nthreads=" + ncores + ", templateId: " + templateId);
             }
-            int weightedCapacity = getWeightedCapacity(tmpl, instance.getInstanceType());
-            ncores = ncpus * weightedCapacity;
-            nthreads = ncores;
-            log.debug("Instance type: " + instance.getInstanceType()
-                    + ", ncpus=" + ncpus + " × WeightedCapacity=" + weightedCapacity
-                    + " → ncores=nthreads=" + ncores + ", templateId: " + templateId);
         } else {
             // Template not found — fall back to raw CpuOptions
             ncores = instance.getCpuOptions().getCoreCount();
