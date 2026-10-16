@@ -1486,6 +1486,7 @@ class AWSClient:
         fleet_type = None
         successful_instances = []
         failed_instances = []
+        created_lt_versions: List[Dict] = []
 
         try:
             logger.debug(f"Creating EC2 Fleet for template {template.get('templateId')}")
@@ -1573,7 +1574,6 @@ class AWSClient:
             # ALWAYS create temporary launch template versions with all overrides.
             # The returned list of (lt_id, version) pairs is used to clean up immediately
             # if create_fleet fails, avoiding an untracked version leak
-            created_lt_versions: List[Dict] = []
             if 'LaunchTemplateConfigs' in fleet_config:
                 logger.debug("Creating temporary launch template versions for EC2 Fleet with all overrides")
                 success, created_lt_versions = self._create_temp_launch_template_versions(fleet_config, template, encoded_user_data, rc_account)
