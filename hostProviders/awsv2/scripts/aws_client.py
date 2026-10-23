@@ -106,8 +106,6 @@ class AWSClient:
             # Get spot instance termination reclaim configuration
             self.spot_terminate_on_reclaim = config_manager.get_spot_terminate_on_reclaim()
             logger.debug(f"AWS_SPOT_TERMINATE_ON_RECLAIM configured: {self.spot_terminate_on_reclaim}")
-            if self.spot_terminate_on_reclaim:
-                self.start_spot_reclaim_monitor()
 
             # Get InstanceID tagging configuration
             self.instance_id_tag_enabled = config_manager.get_instance_id_tag()
@@ -134,7 +132,6 @@ class AWSClient:
             # fresh AWSClient, so the cache never survives across LSF poll cycles.
             self._template_cache: Dict[str, Any] = {}
 
-            # Thread pool — initialised eagerly so _init_vm_pool callers are race-free
             self._pool_lock = threading.Lock()
             self.min_vm_workers = int(os.getenv('AWS_MIN_WORKERS', '10'))
             self.max_vm_workers = int(os.getenv('AWS_MAX_WORKERS', '200'))
@@ -145,6 +142,11 @@ class AWSClient:
                 thread_name_prefix='aws_vm_'
             )
             logger.debug(f"VM thread pool initialised: {workers} workers (cpu_count={cpu_count})")
+
+            # Start the Spot reclaim monitor only after vm_pool is fully initialised
+            # so the daemon thread always finds a valid ThreadPoolExecutor on self.
+            if self.spot_terminate_on_reclaim:
+                self.start_spot_reclaim_monitor()
 
         except Exception as e:
             logger.error(f"AWSClient initialization failed: {e}")
@@ -1484,6 +1486,7 @@ class AWSClient:
         fleet_type = None
         successful_instances = []
         failed_instances = []
+        created_lt_versions: List[Dict] = []
 
         try:
             logger.debug(f"Creating EC2 Fleet for template {template.get('templateId')}")
@@ -1571,7 +1574,6 @@ class AWSClient:
             # ALWAYS create temporary launch template versions with all overrides.
             # The returned list of (lt_id, version) pairs is used to clean up immediately
             # if create_fleet fails, avoiding an untracked version leak
-            created_lt_versions: List[Dict] = []
             if 'LaunchTemplateConfigs' in fleet_config:
                 logger.debug("Creating temporary launch template versions for EC2 Fleet with all overrides")
                 success, created_lt_versions = self._create_temp_launch_template_versions(fleet_config, template, encoded_user_data, rc_account)
