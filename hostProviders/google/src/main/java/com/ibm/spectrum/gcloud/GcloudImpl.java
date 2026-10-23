@@ -658,6 +658,10 @@ public class GcloudImpl implements IGcloud {
                     && statusUpdateForCreateMachine) {
                 vmMap = GcloudClient.updateBulkVMList(fReq, rsp);
                 if (vmMap == null || vmMap.isEmpty()) {
+                    inReq.setStatus(fReq.getStatus());
+                    inReq.setMsg(fReq.getMsg());
+                    inReq.setMachines(fReq.getMachines());
+                    updateVmStatus(fReq);
                     return;
                 }
                 machinesListInDB = fReq.getMachines();
